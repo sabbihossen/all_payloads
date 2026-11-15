@@ -1,64 +1,98 @@
-# Google Web Toolkit
+# External Variable Modification
 
-> Google Web Toolkit (GWT), also known as GWT Web Toolkit, is an open-source set of tools that allows web developers to create and maintain JavaScript front-end applications using Java. It was originally developed by Google and had its initial release on May 16, 2006.
+> External Variable Modification Vulnerability occurs when a web application improperly handles user input, allowing attackers to overwrite internal variables. In PHP, functions like extract($_GET), extract($_POST), or import_request_variables() can be abused if they import user-controlled data into the global scope without proper validation. This can lead to security issues such as unauthorized changes to application logic, privilege escalation, or bypassing security controls.
 
 ## Summary
 
-* [Tools](#tools)
 * [Methodology](#methodology)
+    * [Overwriting Critical Variables](#overwriting-critical-variables)
+    * [Poisoning File Inclusion](#poisoning-file-inclusion)
+    * [Global Variable Injection](#global-variable-injection)
+* [Remediations](#remediations)
 * [References](#references)
-
-## Tools
-
-* [FSecureLABS/GWTMap](https://github.com/FSecureLABS/GWTMap) - GWTMap is a tool to help map the attack surface of Google Web Toolkit (GWT) based applications.
-* [GDSSecurity/GWT-Penetration-Testing-Toolset](https://github.com/GDSSecurity/GWT-Penetration-Testing-Toolset) - A set of tools made to assist in penetration testing GWT applications.
 
 ## Methodology
 
-* Enumerate the methods of a remote application via it's bootstrap file and create a local backup of the code (selects permutation at random):
+The `extract()` function in PHP imports variables from an array into the current symbol table. While it may seem convenient, it can introduce serious security risks, especially when handling user-supplied data.
 
-    ```ps1
-    ./gwtmap.py -u http://10.10.10.10/olympian/olympian.nocache.js --backup
-    ```
+* It allows overwriting existing variables.
+* It can lead to **variable pollution**, impacting security mechanisms.
+* It can be used as a **gadget** to trigger other vulnerabilities like Remote Code Execution (RCE) and Local File Inclusion (LFI).
 
-* Enumerate the methods of a remote application via a specific code permutation
+By default, `extract()` uses `EXTR_OVERWRITE`, meaning it **replaces existing variables** if they share the same name as keys in the input array.
 
-    ```ps1
-    ./gwtmap.py -u http://10.10.10.10/olympian/C39AB19B83398A76A21E0CD04EC9B14C.cache.js
-    ```
+### Overwriting Critical Variables
 
-* Enumerate the methods whilst routing traffic through an HTTP proxy:
+If `extract()` is used in a script that relies on specific variables, an attacker can manipulate them.
 
-    ```ps1
-    ./gwtmap.py -u http://10.10.10.10/olympian/olympian.nocache.js --backup -p http://127.0.0.1:8080
-    ```
+```php
+<?php
+    $authenticated = false;
+    extract($_GET);
+    if ($authenticated) {
+        echo "Access granted!";
+    } else {
+        echo "Access denied!";
+    }
+?>
+```
 
-* Enumerate the methods of a local copy (a file) of any given permutation:
+**Exploitation:**
 
-    ```ps1
-    ./gwtmap.py -F test_data/olympian/C39AB19B83398A76A21E0CD04EC9B14C.cache.js
-    ```
+In this example, the use of `extract($_GET)` allow an attacker to set the `$authenticated` variable to `true`:
 
-* Filter output to a specific service or method:
+```ps1
+http://example.com/vuln.php?authenticated=true
+http://example.com/vuln.php?authenticated=1
+```
 
-    ```ps1
-    ./gwtmap.py -u http://10.10.10.10/olympian/olympian.nocache.js --filter AuthenticationService.login
-    ```
+### Poisoning File Inclusion
 
-* Generate RPC payloads for all methods of the filtered service, with coloured output
+If `extract()` is combined with file inclusion, attackers can control file paths.
 
-    ```ps1
-    ./gwtmap.py -u http://10.10.10.10/olympian/olympian.nocache.js --filter AuthenticationService --rpc --color
-    ```
+```php
+<?php
+    $page = "config.php";
+    extract($_GET);
+    include "$page";
+?>
+```
 
-* Automatically test (probe) the generate RPC request for the filtered service method
+**Exploitation:**
 
-    ```ps1
-    ./gwtmap.py -u http://10.10.10.10/olympian/olympian.nocache.js --filter AuthenticationService.login --rpc --probe
-    ./gwtmap.py -u http://10.10.10.10/olympian/olympian.nocache.js --filter TestService.testDetails --rpc --probe
-    ```
+```ps1
+http://example.com/vuln.php?page=../../etc/passwd
+```
+
+### Global Variable Injection
+
+:warning: As of PHP 8.1.0, write access to the entire `$GLOBALS` array is no longer supported.
+
+Overwriting `$GLOBALS` when an application calls `extract` function on untrusted value:
+
+```php
+extract($_GET);
+```
+
+An attacker can manipulate **global variables**:
+
+```ps1
+http://example.com/vuln.php?GLOBALS[admin]=1
+```
+
+## Remediations
+
+Use `EXTR_SKIP` to prevent overwriting:
+
+```php
+extract($_GET, EXTR_SKIP);
+```
 
 ## References
 
-* [From Serialized to Shell :: Exploiting Google Web Toolkit with EL Injection - Stevent Seeley - May 22, 2017](https://web.archive.org/web/20260220100658/https://srcincite.io/blog/2017/05/22/from-serialized-to-shell-auditing-google-web-toolkit-with-el-injection.html)
-* [Hacking a Google Web Toolkit application - thehackerish - April 22, 2021](https://web.archive.org/web/20210227222455/https://thehackerish.com/hacking-a-google-web-toolkit-application/)
+* [CWE-473: PHP External Variable Modification - Common Weakness Enumeration - November 19, 2024](https://web.archive.org/web/20260210044429/https://cwe.mitre.org/data/definitions/473.html)
+* [CWE-621: Variable Extraction Error - Common Weakness Enumeration - November 19, 2024](https://web.archive.org/web/20260223131419/https://cwe.mitre.org/data/definitions/621.html)
+* [Function extract - PHP Documentation - March 21, 2001](https://web.archive.org/web/20260210044429/https://www.php.net/manual/en/function.extract.php)
+* [$GLOBALS variables - PHP Documentation - April 30, 2008](https://web.archive.org/web/20260307071107/https://www.php.net/manual/en/reserved.variables.globals.php)
+* [The Ducks - HackThisSite - December 14, 2016](https://github.com/HackThisSite/CTF-Writeups/blob/master/2016/SCTF/Ducks/README.md)
+* [Extracttheflag! - Orel / WindTeam - February 28, 2024](https://web.archive.org/web/20250709004721/https://ctftime.org/writeup/38076)
