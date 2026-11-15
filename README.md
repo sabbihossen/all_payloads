@@ -1,95 +1,147 @@
-# Business Logic Errors
-
-> Business logic errors, also known as business logic flaws, are a type of application vulnerability that stems from the application's business logic, which is the part of the program that deals with real-world business rules and processes. These rules could include things like pricing models, transaction limits, or the sequences of operations that need to be followed in a multi-step process.
+# Brute Force & Rate Limit
 
 ## Summary
 
-* [Methodology](#methodology)
-    * [Review Feature Testing](#review-feature-testing)
-    * [Discount Code Feature Testing](#discount-code-feature-testing)
-    * [Delivery Fee Manipulation](#delivery-fee-manipulation)
-    * [Currency Arbitrage](#currency-arbitrage)
-    * [Premium Feature Exploitation](#premium-feature-exploitation)
-    * [Refund Feature Exploitation](#refund-feature-exploitation)
-    * [Cart/Wishlist Exploitation](#cartwishlist-exploitation)
-    * [Thread Comment Testing](#thread-comment-testing)
-    * [Rounding Error](#rounding-error)
+* [Tools](#tools)
+* [Bruteforce](#bruteforce)
+    * [Burp Suite Intruder](#burp-suite-intruder)
+    * [FFUF](#ffuf)
+* [Rate Limit](#rate-limit)
+    * [TLS Stack - JA3](#tls-stack---ja3)
+    * [Network IPv4](#network-ipv4)
+    * [Network IPv6](#network-ipv6)
 * [References](#references)
 
-## Methodology
+## Tools
 
-Unlike other types of security vulnerabilities like SQL injection or cross-site scripting (XSS), business logic errors do not rely on problems in the code itself (like unfiltered user input). Instead, they take advantage of the normal, intended functionality of the application, but use it in ways that the developer did not anticipate and that have undesired consequences.
+* [ZephrFish/OmniProx](https://github.com/ZephrFish/OmniProx) - IP Rotation from different providers - Like FireProx but for GCP, Azure, Alibaba and CloudFlare.
+* [ddd/gpb](https://github.com/ddd/gpb) - Bruteforcing the phone number of any Google user while rotating IPv6 addresses.
+* [ffuf/ffuf](https://github.com/ffuf/ffuf) - Fast web fuzzer written in Go.
+* [PortSwigger/Burp Suite](https://portswigger.net/burp) - The class-leading vulnerability scanning, penetration testing, and web app security platform.
+* [lwthiker/curl-impersonate](https://github.com/lwthiker/curl-impersonate) - A special build of curl that can impersonate Chrome & Firefox.
 
-Common examples of Business Logic Errors.
+## Bruteforce
 
-### Review Feature Testing
+In a web context, brute-forcing refers to the method of attempting to gain unauthorized access to web applications, particularly through login forms or other user input fields. Attackers systematically input numerous combinations of credentials or other values (e.g., iterating through numeric ranges) to exploit weak passwords or inadequate security measures.
 
-* Assess if you can post a product review as a verified reviewer without having purchased the item.
-* Attempt to provide a rating outside of the standard scale, for instance, a 0, 6 or negative number in a 1 to 5 scale system.
-* Test if the same user can post multiple ratings for a single product. This is useful in detecting potential race conditions.
-* Determine if the file upload field permits all extensions; developers often overlook protections on these endpoints.
-* Investigate the possibility of posting reviews impersonating other users.
-* Attempt Cross-Site Request Forgery (CSRF) on this feature, as it's frequently unprotected by tokens.
+For instance, they might submit thousands of username and password combinations or guess security tokens by iterating through a range, such as 0 to 10,000. This method can lead to unauthorized access and data breaches if not mitigated effectively.
 
-### Discount Code Feature Testing
+Countermeasures like rate limiting, account lockout policies, CAPTCHA, and strong password requirements are essential to protect web applications from such brute-force attacks.
 
-* Try to apply the same discount code multiple times to assess if it's reusable.
-* If the discount code is unique, evaluate for race conditions by applying the same code for two accounts simultaneously.
-* Test for Mass Assignment or HTTP Parameter Pollution to see if you can apply multiple discount codes when the application is designed to accept only one.
-* Test for vulnerabilities from missing input sanitization such as XSS, SQL Injection on this feature.
-* Attempt to apply discount codes to non-discounted items by manipulating the server-side request.
+### Burp Suite Intruder
 
-### Delivery Fee Manipulation
+* **Sniper attack**: target a single position (one variable) while cycling through one payload set.
 
-* Experiment with negative values for delivery charges to see if it reduces the final amount.
-* Evaluate if free delivery can be activated by modifying parameters.
+    ```ps1
 
-### Currency Arbitrage
+    Username: password
+    Username1:Password1
+    Username1:Password2
+    Username1:Password3
+    Username1:Password4
+    ```
 
-* Attempt to pay in one currency, for example, USD, and request a refund in another, like EUR. The difference in conversion rates could result in a profit.
+* **Battering ram attack**: send the same payload to all marked positions at once by using a single payload set.
 
-### Premium Feature Exploitation
+    ```ps1
+    Username1:Username1
+    Username2:Username2
+    Username3:Username3
+    Username4:Username4
+    ```
 
-* Explore the possibility of accessing premium account-only sections or endpoints without a valid subscription.
-* Purchase a premium feature, cancel it, and see if you can still use it after a refund.
-* Look for true/false values in requests/responses that validate premium access. Use tools like Burp's Match & Replace to alter these values for unauthorized premium access.
-* Review cookies or local storage for variables validating premium access.
+* **Pitchfork attack**: use different payload lists in parallel, combining the nth entry from each list into one request.
 
-### Refund Feature Exploitation
+    ```ps1
+    Username1:Password1
+    Username2:Password2
+    Username3:Password3
+    Username4:Password4
+    ```
 
-* Purchase a product, ask for a refund, and see if the product remains accessible.
-* Look for opportunities for currency arbitrage.
-* Submit multiple cancellation requests for a subscription to check the possibility of multiple refunds.
+* **Cluster bomb attack**: iterate through all combinations of multiple payload sets.
 
-### Cart/Wishlist Exploitation
+    ```ps1
+    Username1:Password1
+    Username1:Password2
+    Username1:Password3
+    Username1::Password4
 
-* Test the system by adding products in negative quantities, along with other products, to balance the total.
-* Try to add more of a product than is available.
-* Check if a product in your wishlist or cart can be moved to another user's cart or removed from it.
+    Username2:Password1
+    Username2:Password2
+    Username2:Password3
+    Username2:Password4
+    ```
 
-### Thread Comment Testing
+### FFUF
 
-* Check if there's a limit to the number of comments on a thread.
-* If a user can only comment once, use race conditions to see if multiple comments can be posted.
-* If the system allows comments by verified or privileged users, try to mimic these parameters and see if you can comment as well.
-* Attempt to post comments impersonating other users.
+```bash
+ffuf -w usernames.txt:USER -w passwords.txt:PASS \
+     -u https://target.tld/login \
+     -X POST -d "username=USER&password=PASS" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -H "X-Forwarded-For: FUZZ" -w ipv4-list.txt:FUZZ \
+     -mc all
+```
 
-### Rounding Error
+## Rate Limit
 
-The report [hackerone #176461](https://web.archive.org/web/20170303191338/https://hackerone.com/reports/176461) describes a business logic flaw in a cryptocurrency platform (using XBT/Bitcoin), where an attacker exploits a rounding error in the internal transfer system to generate money out of nothing.
+### HTTP Pipelining
 
-The attacker initiate a transfer of 0.000000005 XBT (0.5 satoshi), this is below the system's minimum precision which is 1 satoshi minimum.
+HTTP pipelining is a feature of HTTP/1.1 that lets a client send multiple HTTP requests on a single persistent TCP connection without waiting for the corresponding responses first. The client "pipes" requests one after another over the same connection.
 
-* Sender's balance doesn't change. The algorithm might be rounded down to 0 satoshi.
-* Receiver's balance increases by 1 satoshi (0.00000001). The algorithm might be rounding up to 1 satoshi.
+### TLS Stack - JA3
 
-The attacker generated 0.00000001 XBT from nothing, since there's no rate limit, OTP, or fraud detection, the attacker can automate this process and repeat it infinitely, effectively printing money.
+JA3 is a method for fingerprinting TLS clients (and JA3S for TLS servers) by hashing the contents of the TLS "hello" messages. It gives a compact identifier you can use to detect, classify, and track clients on the network even when higher-level protocol fields (like HTTP user-agent) are hidden or faked.
 
-In this example, instead of rounding and rejecting or enforcing a minimum transfer, it ignores the deduction from the sender and credits the receiver.
+> JA3 gathers the decimal values of the bytes for the following fields in the Client Hello packet; SSL Version, Accepted Ciphers, List of Extensions, Elliptic Curves, and Elliptic Curve Formats. It then concatenates those values together in order, using a "," to delimit each field and a "-" to delimit each value in each field.
+
+* Burp Suite JA3: `53d67b2a806147a7d1d5df74b54dd049`, `62f6a6727fda5a1104d5b147cd82e520`
+* Tor Client JA3: `e7d705a3286e19ea42f587b344ee6865`
+
+**Countermeasures:**
+
+* Use browser-driven automation (Puppeteer / Playwright)
+* Spoof TLS handshakes with [lwthiker/curl-impersonate](https://github.com/lwthiker/curl-impersonate)
+* JA3 randomization plugins for browsers/libraries
+
+### Network IPv4
+
+Use multiple proxies to simulate multiple clients.
+
+```bash
+proxychains ffuf -w wordlist.txt -u https://target.tld/FUZZ
+```
+
+* Use `random_chain` to rotate each request
+
+    ```ps1
+    random_chain
+    ```
+
+* Set the number of proxies to chain per connection to 1.
+
+    ```ps1
+    chain_len = 1
+    ```
+
+* Finally, specify the proxies in a configuration file:
+
+    ```ps1
+    # type  host      port
+    socks5  127.0.0.1 1080
+    socks5  192.168.1.50 1080
+    http    proxy1.example.com 8080
+    http    proxy2.example.com 8080
+    ```
+
+### Network IPv6
+
+Many cloud providers, such as Vultr, offer /64 IPv6 ranges, which provide a vast number of addresses (18 446 744 073 709 551 616). This allows for extensive IP rotation during brute-force attacks.
 
 ## References
 
-* [Business Logic Vulnerabilities - PortSwigger - March 5, 2026](https://web.archive.org/web/20260305155804/https://portswigger.net/web-security/logic-flaws)
-* [Business Logic Vulnerability - OWASP - April 22, 2020](https://web.archive.org/web/20200422002600/https://owasp.org/www-community/vulnerabilities/Business_logic_vulnerability)
-* [CWE-840: Business Logic Errors - CWE - March 24, 2011](https://web.archive.org/web/20260304013031/https://cwe.mitre.org/data/definitions/840.html)
-* [Examples of Business Logic Vulnerabilities - PortSwigger - September 22, 2020](https://web.archive.org/web/20200922175829/https://portswigger.net/web-security/logic-flaws/examples)
+* [Bruteforcing the phone number of any Google user - brutecat - June 9, 2025](https://web.archive.org/web/20250609141236/https://brutecat.com/articles/leaking-google-phones)
+* [Burp Intruder attack types - PortSwigger - August 19, 2025](https://web.archive.org/web/20260124024947/https://portswigger.net/burp/documentation/desktop/tools/intruder/configure-attack/attack-types)
+* [Detecting and annoying Burp users - Julien Voisin -  May 3, 2021](https://web.archive.org/web/20260102160139/https://dustri.org/b/detecting-and-annoying-burp-users.html)
+* [OmniProx: Multi-Cloud IP Rotation Made Simple - Andy Gill - September 28, 2025](https://web.archive.org/web/20260215082718/https://blog.zsec.uk/omniprox/)
