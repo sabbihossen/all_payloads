@@ -1,60 +1,100 @@
-# Insecure Deserialization
+# HTTP Parameter Pollution
 
-> Serialization is the process of turning some object into a data format that can be restored later. People often serialize objects in order to save them to storage, or to send as part of communications. Deserialization is the reverse of that process -- taking data structured from some format, and rebuilding it into an object - OWASP
+> HTTP Parameter Pollution (HPP) is a Web attack evasion technique that allows an attacker to craft a HTTP request in order to manipulate web logics or retrieve hidden information. This evasion technique is based on splitting an attack vector between multiple instances of a parameter with the same name (?param1=value&param1=value). As there is no formal way of parsing HTTP parameters, individual web technologies have their own unique way of parsing and reading URL parameters with the same name. Some taking the first occurrence, some taking the last occurrence, and some reading it as an array. This behavior is abused by the attacker in order to bypass pattern-based security mechanisms.
 
 ## Summary
 
-* [Deserialization Identifier](#deserialization-identifier)
-* [POP Gadgets](#pop-gadgets)
-* [Labs](#labs)
+* [Tools](#tools)
+* [Methodology](#methodology)
+    * [Parameter Pollution Table](#parameter-pollution-table)
+    * [Parameter Pollution Payloads](#parameter-pollution-payloads)
 * [References](#references)
 
-## Deserialization Identifier
+## Tools
 
-Check the following sub-sections, located in other chapters :
+* **Burp Suite**: Manually modify requests to test duplicate parameters.
+* **OWASP ZAP**: Intercept and manipulate HTTP parameters.
 
-* [Java deserialization : ysoserial, ...](Java.md)
-* [PHP (Object injection) : phpggc, ...](PHP.md)
-* [Ruby : universal rce gadget, ...](Ruby.md)
-* [Python : pickle, PyYAML, ...](Python.md)
-* [.NET : ysoserial.net, ...](DotNET.md)
+## Methodology
 
-| Object Type     | Header (Hex)               | Header (Base64) | Indicators                                                   |
-| --------------- | -------------------------- | --------------- | ------------------------------------------------------------ |
-| .NET ViewState  | `FF 01`                    | `/w`            | Commonly found inside hidden inputs around HTML forms        |
-| BinaryFormatter | `0001 0000 00FF FFFF FF01` | `AAEAAAD`       | Base64 decode and check for the long `FF FF FF FF` sequence. |
-| Java Serialized | `AC ED`                    | `rO`            | Base64 decode and check first bytes.                         |
-| PHP Serialized  | `4F 3A`                    | `Tz`            | Prefixes like `O:, a:, s:, i:, b:` and length indicators.    |
-| Python Pickle   | `80 04 95`                 | `gASV`          | Text: opcodes like `(lp0, S'Test'`.                          |
-| Ruby Marshal    | `04 08`                    | `BAgK`          | Base64 decode and look for `\x04\x08` at the start.          |
+HTTP Parameter Pollution (HPP) is a web security vulnerability where an attacker injects multiple instances of the same HTTP parameter into a request. The server's behavior when processing duplicate parameters can vary, potentially leading to unexpected or exploitable behavior.
 
-## POP Gadgets
+HPP can target two levels:
 
-> A POP (Property Oriented Programming) gadget is a piece of code implemented by an application's class, that can be called during the deserialization process.
+* Client-Side HPP: Exploits JavaScript code running on the client (browser).
+* Server-Side HPP: Exploits how the server processes multiple parameters with the same name.
 
-POP gadgets characteristics:
+**Examples**:
 
-* Can be serialized
-* Has public/accessible properties
-* Implements specific vulnerable methods
-* Has access to other "callable" classes
+```ps1
+/app?debug=false&debug=true
+/transfer?amount=1&amount=5000
+```
 
-## Labs
+### Parameter Pollution Table
 
-* [PortSwigger - Modifying serialized objects](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-modifying-serialized-objects)
-* [PortSwigger - Modifying serialized data types](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-modifying-serialized-data-types)
-* [PortSwigger - Using application functionality to exploit insecure deserialization](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-using-application-functionality-to-exploit-insecure-deserialization)
-* [PortSwigger - Arbitrary object injection in PHP](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-arbitrary-object-injection-in-php)
-* [PortSwigger - Exploiting Java deserialization with Apache Commons](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-exploiting-java-deserialization-with-apache-commons)
-* [PortSwigger - Exploiting PHP deserialization with a pre-built gadget chain](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-exploiting-php-deserialization-with-a-pre-built-gadget-chain)
-* [PortSwigger - Exploiting Ruby deserialization using a documented gadget chain](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-exploiting-ruby-deserialization-using-a-documented-gadget-chain)
-* [PortSwigger - Developing a custom gadget chain for Java deserialization](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-developing-a-custom-gadget-chain-for-java-deserialization)
-* [PortSwigger - Developing a custom gadget chain for PHP deserialization](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-developing-a-custom-gadget-chain-for-php-deserialization)
-* [PortSwigger - Using PHAR deserialization to deploy a custom gadget chain](https://portswigger.net/web-security/deserialization/exploiting/lab-deserialization-using-phar-deserialization-to-deploy-a-custom-gadget-chain)
-* [NickstaDB - DeserLab](https://github.com/NickstaDB/DeserLab)
+When ?par1=a&par1=b
+
+| Technology                                      | Parsing Result           | outcome (par1=) |
+| ----------------------------------------------- | ------------------------ | --------------- |
+| ASP.NET/IIS                                     | All occurrences          | a,b             |
+| ASP/IIS                                         | All occurrences          | a,b             |
+| Golang net/http - `r.URL.Query().Get("param")`  | First occurrence         | a               |
+| Golang net/http - `r.URL.Query()["param"]`      | All occurrences in array | ['a','b']       |
+| IBM HTTP Server                                 | First occurrence         | a               |
+| IBM Lotus Domino                                | First occurrence         | a               |
+| JSP,Servlet/Tomcat                              | First occurrence         | a               |
+| mod_wsgi (Python)/Apache                        | First occurrence         | a               |
+| Nodejs                                          | All occurrences          | a,b             |
+| Perl CGI/Apache                                 | First occurrence         | a               |
+| Perl CGI/Apache                                 | First occurrence         | a               |
+| PHP/Apache                                      | Last occurrence          | b               |
+| PHP/Zues                                        | Last occurrence          | b               |
+| Python Django                                   | Last occurrence          | b               |
+| Python Flask                                    | First occurrence         | a               |
+| Python/Zope                                     | All occurrences in array | ['a','b']       |
+| Ruby on Rails                                   | Last occurrence          | b               |
+
+### Parameter Pollution Payloads
+
+* Duplicate Parameters:
+
+    ```ps1
+    param=value1&param=value2
+    ```
+
+* Array Injection:
+
+    ```ps1
+    param[]=value1
+    param[]=value1&param[]=value2
+    param[]=value1&param=value2
+    param=value1&param[]=value2
+    ```
+
+* Encoded Injection:
+
+    ```ps1
+    param=value1%26other=value2
+    ```
+
+* Nested Injection:
+
+    ```ps1
+    param[key1]=value1&param[key2]=value2
+    ```
+
+* JSON Injection:
+
+    ```ps1
+    {
+        "test": "user",
+        "test": "admin"
+    }
+    ```
 
 ## References
 
-* [ExploitDB Introduction - Abdelazim Mohammed(@intx0x80) - May 27, 2018](https://web.archive.org/web/20180527082635/https://www.exploit-db.com/docs/english/44756-deserialization-vulnerability.pdf)
-* [Exploiting insecure deserialization vulnerabilities - PortSwigger - July 25, 2020](https://web.archive.org/web/20200725143552/https://portswigger.net/web-security/deserialization/exploiting)
-* [Instagram's Million Dollar Bug - Wesley Wineberg - December 17, 2015](https://web.archive.org/web/20151217194413/http://exfiltrated.com/research-Instagram-RCE.php)
+* [How to Detect HTTP Parameter Pollution Attacks - Acunetix - January 9, 2024](https://web.archive.org/web/20260112091623/https://www.acunetix.com/blog/whitepaper-http-parameter-pollution/)
+* [HTTP Parameter Pollution - Itamar Verta - December 20, 2023](https://web.archive.org/web/20190721110154/https://www.imperva.com/learn/application-security/http-parameter-pollution/)
+* [HTTP Parameter Pollution in 11 minutes - PwnFunction - January 28, 2019](https://web.archive.org/web/20190212095035/https://www.youtube.com/watch?v=QVZBl8yxVX0)
