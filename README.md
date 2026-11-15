@@ -1,256 +1,95 @@
-# Clickjacking
+# Business Logic Errors
 
-> Clickjacking is a type of web security vulnerability where a malicious website tricks a user into clicking on something different from what the user perceives, potentially causing the user to perform unintended actions without their knowledge or consent. Users are tricked into performing all sorts of unintended actions as such as typing in the password, clicking on ‘Delete my account' button, liking a post, deleting a post, commenting on a blog. In other words all the actions that a normal user can do on a legitimate website can be done using clickjacking.
+> Business logic errors, also known as business logic flaws, are a type of application vulnerability that stems from the application's business logic, which is the part of the program that deals with real-world business rules and processes. These rules could include things like pricing models, transaction limits, or the sequences of operations that need to be followed in a multi-step process.
 
 ## Summary
 
-* [Tools](#tools)
 * [Methodology](#methodology)
-    * [UI Redressing](#ui-redressing)
-    * [Invisible Frames](#invisible-frames)
-    * [Button/Form Hijacking](#buttonform-hijacking)
-    * [Execution Methods](#execution-methods)
-* [Preventive Measures](#preventive-measures)
-    * [Implement X-Frame-Options Header](#implement-x-frame-options-header)
-    * [Content Security Policy (CSP)](#content-security-policy-csp)
-    * [Disabling JavaScript](#disabling-javascript)
-* [OnBeforeUnload Event](#onbeforeunload-event)
-* [XSS Filter](#xss-filter)
-    * [IE8 XSS filter](#ie8-xss-filter)
-    * [Chrome 4.0 XSSAuditor filter](#chrome-40-xssauditor-filter)
-* [Challenge](#challenge)
-* [Labs](#labs)
+    * [Review Feature Testing](#review-feature-testing)
+    * [Discount Code Feature Testing](#discount-code-feature-testing)
+    * [Delivery Fee Manipulation](#delivery-fee-manipulation)
+    * [Currency Arbitrage](#currency-arbitrage)
+    * [Premium Feature Exploitation](#premium-feature-exploitation)
+    * [Refund Feature Exploitation](#refund-feature-exploitation)
+    * [Cart/Wishlist Exploitation](#cartwishlist-exploitation)
+    * [Thread Comment Testing](#thread-comment-testing)
+    * [Rounding Error](#rounding-error)
 * [References](#references)
-
-## Tools
-
-* [portswigger/burp](https://portswigger.net/burp)
-* [zaproxy/zaproxy](https://github.com/zaproxy/zaproxy)
-* [machine1337/clickjack](https://github.com/machine1337/clickjack)
 
 ## Methodology
 
-### UI Redressing
+Unlike other types of security vulnerabilities like SQL injection or cross-site scripting (XSS), business logic errors do not rely on problems in the code itself (like unfiltered user input). Instead, they take advantage of the normal, intended functionality of the application, but use it in ways that the developer did not anticipate and that have undesired consequences.
 
-UI Redressing is a Clickjacking technique where an attacker overlays a transparent UI element on top of a legitimate website or application.
-The transparent UI element contains malicious content or actions that are visually hidden from the user. By manipulating the transparency and positioning of elements,
-the attacker can trick the user into interacting with the hidden content, believing they are interacting with the visible interface.
+Common examples of Business Logic Errors.
 
-* **How UI Redressing Works:**
-    * Overlaying Transparent Element: The attacker creates a transparent HTML element (usually a `<div>`) that covers the entire visible area of a legitimate website. This element is made transparent using CSS properties like `opacity: 0;`.
-    * Positioning and Layering: By setting the CSS properties such as `position: absolute; top: 0; left: 0;`, the transparent element is positioned to cover the entire viewport. Since it's transparent, the user doesn't see it.
-    * Misleading User Interaction: The attacker places deceptive elements within the transparent container, such as fake buttons, links, or forms. These elements perform actions when clicked, but the user is unaware of their presence due to the overlaying transparent UI element.
-    * User Interaction: When the user interacts with the visible interface, they are unknowingly interacting with the hidden elements due to the transparent overlay. This interaction can lead to unintended actions or unauthorized operations.
+### Review Feature Testing
 
-```html
-<div style="opacity: 0; position: absolute; top: 0; left: 0; height: 100%; width: 100%;">
-  <a href="malicious-link">Click me</a>
-</div>
-```
+* Assess if you can post a product review as a verified reviewer without having purchased the item.
+* Attempt to provide a rating outside of the standard scale, for instance, a 0, 6 or negative number in a 1 to 5 scale system.
+* Test if the same user can post multiple ratings for a single product. This is useful in detecting potential race conditions.
+* Determine if the file upload field permits all extensions; developers often overlook protections on these endpoints.
+* Investigate the possibility of posting reviews impersonating other users.
+* Attempt Cross-Site Request Forgery (CSRF) on this feature, as it's frequently unprotected by tokens.
 
-### Invisible Frames
+### Discount Code Feature Testing
 
-Invisible Frames is a Clickjacking technique where attackers use hidden iframes to trick users into interacting with content from another website unknowingly.
-These iframes are made invisible by setting their dimensions to zero (height: 0; width: 0;) and removing their borders (border: none;).
-The content inside these invisible frames can be malicious, such as phishing forms, malware downloads, or any other harmful actions.
+* Try to apply the same discount code multiple times to assess if it's reusable.
+* If the discount code is unique, evaluate for race conditions by applying the same code for two accounts simultaneously.
+* Test for Mass Assignment or HTTP Parameter Pollution to see if you can apply multiple discount codes when the application is designed to accept only one.
+* Test for vulnerabilities from missing input sanitization such as XSS, SQL Injection on this feature.
+* Attempt to apply discount codes to non-discounted items by manipulating the server-side request.
 
-* **How Invisible Frames Work:**
-    * Hidden IFrame Creation: The attacker includes an `<iframe>` element in a webpage, setting its dimensions to zero and removing its border, making it invisible to the user.
+### Delivery Fee Manipulation
 
-      ```html
-      <iframe src="malicious-site" style="opacity: 0; height: 0; width: 0; border: none;"></iframe>
-      ```
+* Experiment with negative values for delivery charges to see if it reduces the final amount.
+* Evaluate if free delivery can be activated by modifying parameters.
 
-    * Loading Malicious Content: The src attribute of the iframe points to a malicious website or resource controlled by the attacker. This content is loaded silently without the user's knowledge because the iframe is invisible.
-    * User Interaction: The attacker overlays enticing elements on top of the invisible iframe, making it seem like the user is interacting with the visible interface. For instance, the attacker might position a transparent button over the invisible iframe. When the user clicks the button, they are essentially clicking on the hidden content within the iframe.
-    * Unintended Actions: Since the user is unaware of the invisible iframe, their interactions can lead to unintended actions, such as submitting forms, clicking on malicious links, or even performing financial transactions without their consent.
+### Currency Arbitrage
 
-### Button/Form Hijacking
+* Attempt to pay in one currency, for example, USD, and request a refund in another, like EUR. The difference in conversion rates could result in a profit.
 
-Button/Form Hijacking is a Clickjacking technique where attackers trick users into interacting with invisible or hidden buttons/forms, leading to unintended actions on a legitimate website. By overlaying deceptive elements on top of visible buttons or forms, attackers can manipulate user interactions to perform malicious actions without the user's knowledge.
+### Premium Feature Exploitation
 
-* **How Button/Form Hijacking Works:**
-    * Visible Interface: The attacker presents a visible button or form to the user, encouraging them to click or interact with it.
+* Explore the possibility of accessing premium account-only sections or endpoints without a valid subscription.
+* Purchase a premium feature, cancel it, and see if you can still use it after a refund.
+* Look for true/false values in requests/responses that validate premium access. Use tools like Burp's Match & Replace to alter these values for unauthorized premium access.
+* Review cookies or local storage for variables validating premium access.
 
-    ```html
-    <button onclick="submitForm()">Click me</button>
-    ```
+### Refund Feature Exploitation
 
-    * Invisible Overlay: The attacker overlays this visible button or form with an invisible or transparent element that contains a malicious action, such as submitting a hidden form.
+* Purchase a product, ask for a refund, and see if the product remains accessible.
+* Look for opportunities for currency arbitrage.
+* Submit multiple cancellation requests for a subscription to check the possibility of multiple refunds.
 
-    ```html
-    <form action="malicious-site" method="POST" id="hidden-form" style="display: none;">
-    <!-- Hidden form fields -->
-    </form>
-    ```
+### Cart/Wishlist Exploitation
 
-    * Deceptive Interaction: When the user clicks the visible button, they are unknowingly interacting with the hidden form due to the invisible overlay. The form is submitted, potentially causing unauthorized actions or data leakage.
+* Test the system by adding products in negative quantities, along with other products, to balance the total.
+* Try to add more of a product than is available.
+* Check if a product in your wishlist or cart can be moved to another user's cart or removed from it.
 
-    ```html
-    <button onclick="submitForm()">Click me</button>
-    <form action="legitimate-site" method="POST" id="hidden-form">
-      <!-- Hidden form fields -->
-    </form>
-    <script>
-      function submitForm() {
-        document.getElementById('hidden-form').submit();
-      }
-    </script>
-    ```
+### Thread Comment Testing
 
-### Execution Methods
+* Check if there's a limit to the number of comments on a thread.
+* If a user can only comment once, use race conditions to see if multiple comments can be posted.
+* If the system allows comments by verified or privileged users, try to mimic these parameters and see if you can comment as well.
+* Attempt to post comments impersonating other users.
 
-* Creating Hidden Form: The attacker creates a hidden form containing malicious input fields, targeting a vulnerable action on the victim's website. This form remains invisible to the user.
+### Rounding Error
 
-```html
-  <form action="malicious-site" method="POST" id="hidden-form" style="display: none;">
-  <input type="hidden" name="username" value="attacker">
-  <input type="hidden" name="action" value="transfer-funds">
-  </form>
-```
+The report [hackerone #176461](https://web.archive.org/web/20170303191338/https://hackerone.com/reports/176461) describes a business logic flaw in a cryptocurrency platform (using XBT/Bitcoin), where an attacker exploits a rounding error in the internal transfer system to generate money out of nothing.
 
-* Overlaying Visible Element: The attacker overlays a visible element (button or form) on their malicious page, encouraging users to interact with it. When the user clicks the visible element, they unknowingly trigger the hidden form's submission.
+The attacker initiate a transfer of 0.000000005 XBT (0.5 satoshi), this is below the system's minimum precision which is 1 satoshi minimum.
 
-```js
-  function submitForm() {
-    document.getElementById('hidden-form').submit();
-  }
-```
+* Sender's balance doesn't change. The algorithm might be rounded down to 0 satoshi.
+* Receiver's balance increases by 1 satoshi (0.00000001). The algorithm might be rounding up to 1 satoshi.
 
-## Preventive Measures
+The attacker generated 0.00000001 XBT from nothing, since there's no rate limit, OTP, or fraud detection, the attacker can automate this process and repeat it infinitely, effectively printing money.
 
-### Implement X-Frame-Options Header
-
-Implement the X-Frame-Options header with the DENY or SAMEORIGIN directive to prevent your website from being embedded within an iframe without your consent.
-
-```apache
-Header always append X-Frame-Options SAMEORIGIN
-```
-
-### Content Security Policy (CSP)
-
-Use CSP to control the sources from which content can be loaded on your website, including scripts, styles, and frames.
-Define a strong CSP policy to prevent unauthorized framing and loading of external resources.
-Example in HTML meta tag:
-
-```html
-<meta http-equiv="Content-Security-Policy" content="frame-ancestors 'self';">
-```
-
-### Disabling JavaScript
-
-* Since these type of client side protections relies on JavaScript frame busting code, if the victim has JavaScript disabled or it is possible for an attacker to disable JavaScript code, the web page will not have any protection mechanism against clickjacking.
-* There are three deactivation techniques that can be used with frames:
-    * Restricted frames with Internet Explorer: Starting from IE6, a frame can have the "security" attribute that, if it is set to the value "restricted", ensures that JavaScript code, ActiveX controls, and re-directs to other sites do not work in the frame.
-
-    ```html
-    <iframe src="http://target site" security="restricted"></iframe>
-    ```
-
-    * Sandbox attribute: with HTML5 there is a new attribute called “sandbox”. It enables a set of restrictions on content loaded into the iframe. At this moment this attribute is only compatible with Chrome and Safari.
-
-    ```html
-    <iframe src="http://target site" sandbox></iframe>
-    ```
-
-## OnBeforeUnload Event
-
-* The `onBeforeUnload` event could be used to evade frame busting code. This event is called when the frame busting code wants to destroy the iframe by loading the URL in the whole web page and not only in the iframe. The handler function returns a string that is prompted to the user asking confirm if he wants to leave the page. When this string is displayed to the user is likely to cancel the navigation, defeating target's frame busting attempt.
-
-* The attacker can use this attack by registering an unload event on the top page using the following example code:
-
-```html
-<h1>www.fictitious.site</h1>
-<script>
-    window.onbeforeunload = function()
-    {
-        return " Do you want to leave fictitious.site?";
-    }
-</script>
-<iframe src="http://target site">
-```
-
-* The previous technique requires the user interaction but, the same result, can be achieved without prompting the user. To do this the attacker have to automatically cancel the incoming navigation request in an onBeforeUnload event handler by repeatedly submitting (for example every millisecond) a navigation request to a web page that responds with a _"HTTP/1.1 204 No Content"_ header.
-
-204 page:
-
-```php
-<?php
-    header("HTTP/1.1 204 No Content");
-?>
-```
-
-Attacker's Page:
-
-```js
-<script>
-    var prevent_bust = 0;
-    window.onbeforeunload = function() {
-        prevent_bust++;
-    };
-    setInterval(
-        function() {
-            if (prevent_bust > 0) {
-                prevent_bust -= 2;
-                window.top.location = "http://attacker.site/204.php";
-            }
-        }, 1);
-</script>
-<iframe src="http://target site">
-```
-
-## XSS Filter
-
-### IE8 XSS filter
-
-This filter has visibility into all parameters of each request and response flowing through the web browser and it compares them to a set of regular expressions in order to look for reflected XSS attempts. When the filter identifies a possible XSS attacks; it disables all inline scripts within the page, including frame busting scripts (the same thing could be done with external scripts). For this reason an attacker could induce a false positive by inserting the beginning of the frame busting script into a request's parameters.
-
-```html
-<script>
-    if ( top != self )
-    {
-        top.location=self.location;
-    }
-</script>
-```
-
-Attacker View:
-
-```html
-<iframe src=”http://target site/?param=<script>if”>
-```
-
-### Chrome 4.0 XSSAuditor filter
-
-It has a little different behaviour compared to IE8 XSS filter, in fact with this filter an attacker could deactivate a “script” by passing its code in a request parameter. This enables the framing page to specifically target a single snippet containing the frame busting code, leaving all the other codes intact.
-
-Attacker View:
-
-```html
-<iframe src=”http://target site/?param=if(top+!%3D+self)+%7B+top.location%3Dself.location%3B+%7D”>
-```
-
-## Challenge
-
-Inspect the following code:
-
-```html
-<div style="position: absolute; opacity: 0;">
-  <iframe src="https://legitimate-site.com/login" width="500" height="500"></iframe>
-</div>
-<button onclick="document.getElementsByTagName('iframe')[0].contentWindow.location='malicious-site.com';">Click me</button>
-```
-
-Determine the Clickjacking vulnerability within this code snippet. Identify how the hidden iframe is being used to exploit the user's actions when they click the button, leading them to a malicious website.
-
-## Labs
-
-* [OWASP WebGoat](https://owasp.org/www-project-webgoat/)
-* [OWASP Client Side Clickjacking Test](https://owasp.org/www-project-web-security-testing-guide/v41/4-Web_Application_Security_Testing/11-Client_Side_Testing/09-Testing_for_Clickjacking)
+In this example, instead of rounding and rejecting or enforcing a minimum transfer, it ignores the deduction from the sender and credits the receiver.
 
 ## References
 
-* [Clickjacker.io - Saurabh Banawar - May 10, 2020](https://web.archive.org/web/20200510214313/https://clickjacker.io/)
-* [Clickjacking - Gustav Rydstedt - April 28, 2020](https://web.archive.org/web/20200428022051/https://owasp.org/www-community/attacks/Clickjacking)
-* [Synopsys Clickjacking - BlackDuck - November 29, 2019](https://web.archive.org/web/20240917212838/https://www.synopsys.com/glossary/what-is-clickjacking.html)
-* [Web-Security Clickjacking - PortSwigger - October 12, 2019](https://web.archive.org/web/20260215062230/https://portswigger.net/web-security/clickjacking)
+* [Business Logic Vulnerabilities - PortSwigger - March 5, 2026](https://web.archive.org/web/20260305155804/https://portswigger.net/web-security/logic-flaws)
+* [Business Logic Vulnerability - OWASP - April 22, 2020](https://web.archive.org/web/20200422002600/https://owasp.org/www-community/vulnerabilities/Business_logic_vulnerability)
+* [CWE-840: Business Logic Errors - CWE - March 24, 2011](https://web.archive.org/web/20260304013031/https://cwe.mitre.org/data/definitions/840.html)
+* [Examples of Business Logic Vulnerabilities - PortSwigger - September 22, 2020](https://web.archive.org/web/20200922175829/https://portswigger.net/web-security/logic-flaws/examples)
