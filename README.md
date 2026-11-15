@@ -1,147 +1,108 @@
-# Brute Force & Rate Limit
+# API Key and Token Leaks
+
+> API keys and tokens are forms of authentication commonly used to manage permissions and access to both public and private services. Leaking these sensitive pieces of data can lead to unauthorized access, compromised security, and potential data breaches.
 
 ## Summary
 
-* [Tools](#tools)
-* [Bruteforce](#bruteforce)
-    * [Burp Suite Intruder](#burp-suite-intruder)
-    * [FFUF](#ffuf)
-* [Rate Limit](#rate-limit)
-    * [TLS Stack - JA3](#tls-stack---ja3)
-    * [Network IPv4](#network-ipv4)
-    * [Network IPv6](#network-ipv6)
-* [References](#references)
+- [Tools](#tools)
+- [Methodology](#methodology)
+    - [Common Causes of Leaks](#common-causes-of-leaks)
+    - [Validate The API Key](#validate-the-api-key)
+- [Reducing The Attack Surface](#reducing-the-attack-surface)
+- [References](#references)
 
 ## Tools
 
-* [ZephrFish/OmniProx](https://github.com/ZephrFish/OmniProx) - IP Rotation from different providers - Like FireProx but for GCP, Azure, Alibaba and CloudFlare.
-* [ddd/gpb](https://github.com/ddd/gpb) - Bruteforcing the phone number of any Google user while rotating IPv6 addresses.
-* [ffuf/ffuf](https://github.com/ffuf/ffuf) - Fast web fuzzer written in Go.
-* [PortSwigger/Burp Suite](https://portswigger.net/burp) - The class-leading vulnerability scanning, penetration testing, and web app security platform.
-* [lwthiker/curl-impersonate](https://github.com/lwthiker/curl-impersonate) - A special build of curl that can impersonate Chrome & Firefox.
+- [aquasecurity/trivy](https://github.com/aquasecurity/trivy) - General purpose vulnerability and misconfiguration scanner which also searches for API keys/secrets.
+- [blacklanternsecurity/badsecrets](https://github.com/blacklanternsecurity/badsecrets) - A library for detecting known or weak secrets on across many platforms.
+- [irsdl/crapsecrets](https://github.com/irsdl/crapsecrets) - A library for detecting known secrets across many web frameworks.
+- [d0ge/sign-saboteur](https://github.com/d0ge/sign-saboteur) - SignSaboteur is a Burp Suite extension for editing, signing, verifying various signed web tokens.
+- [mazen160/secrets-patterns-db](https://github.com/mazen160/secrets-patterns-db) - Secrets Patterns DB: The largest open-source Database for detecting secrets, API keys, passwords, tokens, and more.
+- [momenbasel/KeyFinder](https://github.com/momenbasel/KeyFinder) - is a tool that let you find keys while surfing the web.
+- [streaak/keyhacks](https://github.com/streaak/keyhacks) - is a repository which shows quick ways in which API keys leaked by a bug bounty program can be checked to see if they're valid.
+- [trufflesecurity/truffleHog](https://github.com/trufflesecurity/truffleHog) - Find credentials all over the place.
+- [projectdiscovery/nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) - Use these templates to test an API token against many API service endpoints.
 
-## Bruteforce
-
-In a web context, brute-forcing refers to the method of attempting to gain unauthorized access to web applications, particularly through login forms or other user input fields. Attackers systematically input numerous combinations of credentials or other values (e.g., iterating through numeric ranges) to exploit weak passwords or inadequate security measures.
-
-For instance, they might submit thousands of username and password combinations or guess security tokens by iterating through a range, such as 0 to 10,000. This method can lead to unauthorized access and data breaches if not mitigated effectively.
-
-Countermeasures like rate limiting, account lockout policies, CAPTCHA, and strong password requirements are essential to protect web applications from such brute-force attacks.
-
-### Burp Suite Intruder
-
-* **Sniper attack**: target a single position (one variable) while cycling through one payload set.
-
-    ```ps1
-
-    Username: password
-    Username1:Password1
-    Username1:Password2
-    Username1:Password3
-    Username1:Password4
+    ```powershell
+    nuclei -t token-spray/ -var token=token_list.txt
     ```
 
-* **Battering ram attack**: send the same payload to all marked positions at once by using a single payload set.
+## Methodology
 
-    ```ps1
-    Username1:Username1
-    Username2:Username2
-    Username3:Username3
-    Username4:Username4
+- **API Keys**: Unique identifiers used to authenticate requests associated with your project or application.
+- **Tokens**: Security tokens (like OAuth tokens) that grant access to protected resources.
+
+### Common Causes of Leaks
+
+- **Hardcoding in Source Code**: Developers may unintentionally leave API keys or tokens directly in the source code.
+
+    ```py
+    # Example of hardcoded API key
+    api_key = "1234567890abcdef"
     ```
 
-* **Pitchfork attack**: use different payload lists in parallel, combining the nth entry from each list into one request.
+- **Public Repositories**: Accidentally committing sensitive keys and tokens to publicly accessible version control systems like GitHub.
 
     ```ps1
-    Username1:Password1
-    Username2:Password2
-    Username3:Password3
-    Username4:Password4
+    ## Scan a Github Organization
+    docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest github --org=trufflesecurity
+    
+    ## Scan a GitHub Repository, its Issues and Pull Requests
+    docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest github --repo https://github.com/trufflesecurity/test_keys --issue-comments --pr-comments
     ```
 
-* **Cluster bomb attack**: iterate through all combinations of multiple payload sets.
+- **Hardcoding in Docker Images**: API keys and credentials might be hardcoded in Docker images hosted on DockerHub or private registries.
 
     ```ps1
-    Username1:Password1
-    Username1:Password2
-    Username1:Password3
-    Username1::Password4
-
-    Username2:Password1
-    Username2:Password2
-    Username2:Password3
-    Username2:Password4
+    # Scan a Docker image for verified secrets
+    docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest docker --image trufflesecurity/secrets
     ```
 
-### FFUF
+- **Logs and Debug Information**: Keys and tokens might be inadvertently logged or printed during debugging processes.
 
-```bash
-ffuf -w usernames.txt:USER -w passwords.txt:PASS \
-     -u https://target.tld/login \
-     -X POST -d "username=USER&password=PASS" \
-     -H "Content-Type: application/x-www-form-urlencoded" \
-     -H "X-Forwarded-For: FUZZ" -w ipv4-list.txt:FUZZ \
-     -mc all
+- **Configuration Files**: Including keys and tokens in publicly accessible configuration files (e.g., .env files, config.json, settings.py, or .aws/credentials.).
+
+### Validate The API Key
+
+If assistance is needed in identifying the service that generated the token, [mazen160/secrets-patterns-db](https://github.com/mazen160/secrets-patterns-db) can be consulted. It is the largest open-source database for detecting secrets, API keys, passwords, tokens, and more. This database contains regex patterns for various secrets.
+
+```yaml
+patterns:
+  - pattern:
+      name: AWS API Gateway
+      regex: '[0-9a-z]+.execute-api.[0-9a-z._-]+.amazonaws.com'
+      confidence: low
+  - pattern:
+      name: AWS API Key
+      regex: AKIA[0-9A-Z]{16}
+      confidence: high
 ```
 
-## Rate Limit
+Use [streaak/keyhacks](https://github.com/streaak/keyhacks) or read the documentation of the service to find a quick way to verify the validity of an API key.
 
-### HTTP Pipelining
+- **Example**: Telegram Bot API Token
 
-HTTP pipelining is a feature of HTTP/1.1 that lets a client send multiple HTTP requests on a single persistent TCP connection without waiting for the corresponding responses first. The client "pipes" requests one after another over the same connection.
+    ```ps1
+    curl https://api.telegram.org/bot<TOKEN>/getMe
+    ```
 
-### TLS Stack - JA3
+## Reducing The Attack Surface
 
-JA3 is a method for fingerprinting TLS clients (and JA3S for TLS servers) by hashing the contents of the TLS "hello" messages. It gives a compact identifier you can use to detect, classify, and track clients on the network even when higher-level protocol fields (like HTTP user-agent) are hidden or faked.
+Check the existence of a private key or AWS credentials before committing your changes in a GitHub repository.
 
-> JA3 gathers the decimal values of the bytes for the following fields in the Client Hello packet; SSL Version, Accepted Ciphers, List of Extensions, Elliptic Curves, and Elliptic Curve Formats. It then concatenates those values together in order, using a "," to delimit each field and a "-" to delimit each value in each field.
+Add these lines to your `.pre-commit-config.yaml` file.
 
-* Burp Suite JA3: `53d67b2a806147a7d1d5df74b54dd049`, `62f6a6727fda5a1104d5b147cd82e520`
-* Tor Client JA3: `e7d705a3286e19ea42f587b344ee6865`
-
-**Countermeasures:**
-
-* Use browser-driven automation (Puppeteer / Playwright)
-* Spoof TLS handshakes with [lwthiker/curl-impersonate](https://github.com/lwthiker/curl-impersonate)
-* JA3 randomization plugins for browsers/libraries
-
-### Network IPv4
-
-Use multiple proxies to simulate multiple clients.
-
-```bash
-proxychains ffuf -w wordlist.txt -u https://target.tld/FUZZ
+```yml
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v3.2.0
+    hooks:
+    -   id: detect-aws-credentials
+    -   id: detect-private-key
 ```
-
-* Use `random_chain` to rotate each request
-
-    ```ps1
-    random_chain
-    ```
-
-* Set the number of proxies to chain per connection to 1.
-
-    ```ps1
-    chain_len = 1
-    ```
-
-* Finally, specify the proxies in a configuration file:
-
-    ```ps1
-    # type  host      port
-    socks5  127.0.0.1 1080
-    socks5  192.168.1.50 1080
-    http    proxy1.example.com 8080
-    http    proxy2.example.com 8080
-    ```
-
-### Network IPv6
-
-Many cloud providers, such as Vultr, offer /64 IPv6 ranges, which provide a vast number of addresses (18 446 744 073 709 551 616). This allows for extensive IP rotation during brute-force attacks.
 
 ## References
 
-* [Bruteforcing the phone number of any Google user - brutecat - June 9, 2025](https://web.archive.org/web/20250609141236/https://brutecat.com/articles/leaking-google-phones)
-* [Burp Intruder attack types - PortSwigger - August 19, 2025](https://web.archive.org/web/20260124024947/https://portswigger.net/burp/documentation/desktop/tools/intruder/configure-attack/attack-types)
-* [Detecting and annoying Burp users - Julien Voisin -  May 3, 2021](https://web.archive.org/web/20260102160139/https://dustri.org/b/detecting-and-annoying-burp-users.html)
-* [OmniProx: Multi-Cloud IP Rotation Made Simple - Andy Gill - September 28, 2025](https://web.archive.org/web/20260215082718/https://blog.zsec.uk/omniprox/)
+- [Finding Hidden API Keys & How to Use Them - Sumit Jain - August 24, 2019](https://web.archive.org/web/20191012175520/https://medium.com/@sumitcfe/finding-hidden-api-keys-how-to-use-them-11b1e5d0f01d)
+- [Introducing SignSaboteur: Forge Signed Web Tokens with Ease - Zakhar Fedotkin - May 22, 2024](https://web.archive.org/web/20240522172244/https://portswigger.net/research/introducing-signsaboteur-forge-signed-web-tokens-with-ease)
+- [Private API Key Leakage Due to Lack of Access Control - yox - August 8, 2018](https://web.archive.org/web/20211208043535/https://hackerone.com/reports/376060)
+- [Saying Goodbye to My Favorite 5 Minute P1 - Allyson O'Malley - January 6, 2020](https://web.archive.org/web/20250714230057/https://www.allysonomalley.com/2020/01/06/saying-goodbye-to-my-favorite-5-minute-p1/)
